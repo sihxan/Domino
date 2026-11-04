@@ -133,11 +133,10 @@ domino/
 ```python
 class Settings(BaseSettings):
     env: Literal["dev", "prod"] = "dev"
-    tz: str = "Asia/Seoul"
     # stores
-    pg_dsn: str                      # postgresql+psycopg://...
+    pg_dsn: SecretStr                # postgresql+psycopg://... (비밀번호 포함)
     neo4j_uri: str; neo4j_user: str; neo4j_password: SecretStr
-    redis_url: str
+    redis_url: SecretStr             # 비밀번호 포함 가능
     s3_endpoint: str; s3_bucket: str = "domino"; s3_key: SecretStr; s3_secret: SecretStr
     embedder_url: str = "http://embedder:8080"
     langfuse_host: str; langfuse_public_key: str; langfuse_secret_key: SecretStr
@@ -172,6 +171,7 @@ class Settings(BaseSettings):
 - 모든 ID는 ULID 문자열(정렬 가능, 26자), 접두어로 타입 표시: `doc_`, `sty_`, `chk_`, `tri_`, `ev_`, `ent_`, `evt_`, `src_`, `sl_`(storyline), `th_`, `sp_`(signpost), `pred_`, `rpt_`, `run_`, `rq_`(review_queue), `tr_`(trends).
 - `sources.id`는 예외로 ULID가 아니라 `sources/*.yaml`의 사람 키(`src_us_fed_press`)다 — §3.1 주석의 `src_<ulid>`는 이 뜻.
 - SimHash(64-bit unsigned)는 Postgres `bigint`(signed)에 two's complement로 저장하고, 읽을 때 unsigned로 복원한다.
+- `stories.first_seen`·`last_seen`은 소속 문서의 **수집 시각**(`fetched_at`) 기준이고(발행일 아님), 대표 `simhash`는 첫 문서 것으로 고정한다. 72h Story 창은 이 시각을 쓴다.
 - 저장은 전부 UTC `timestamptz`, 표시만 KST. "오늘"은 `report_date = (now_utc → KST).date()`.
 - Neo4j의 시간 속성은 ISO-8601 UTC 문자열이 아니라 `datetime()` 타입으로 저장 (range index가 걸린다).
 
@@ -250,6 +250,12 @@ CREATE TABLE chunks (
   status        text NOT NULL DEFAULT 'new', -- new|extracted|dropped|error
   UNIQUE (doc_id, idx)
 );
+```
+
+마이그레이션 `0002_skip_reason.py` (리뷰 week-1 ⑩):
+
+```sql
+ALTER TABLE raw_documents ADD COLUMN skip_reason text;   -- status='skipped'일 때 too_short|lang_undetected|…, 그 외 NULL
 ```
 
 ### 3.2 추출·검토

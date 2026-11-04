@@ -33,7 +33,7 @@ def det_id(prefix: str, *parts: str) -> str   # f"{prefix}_{sha1('|'.join(parts)
 KST = ZoneInfo("Asia/Seoul")
 def now_utc() -> datetime
 def report_date(now: datetime | None = None) -> date          # KST 기준 오늘
-def asof_for(report_date: date) -> datetime                   # settings.report_hour_kst(기본 6)시 KST → UTC — report_flow cron도 같은 값에서 생성
+def asof_for(report_date: date) -> datetime                   # settings.report_hour_kst(기본 6)시 KST → UTC — report_flow cron도 같은 값에서 생성. 이 값만 읽는 경량 경로(다른 필수 설정 불요)
 def to_kst(dt: datetime) -> datetime
 ```
 
@@ -168,7 +168,9 @@ def detect_wire(doc: Document, same_story_docs: list[Document], wires: WireRules
     """
 ```
 
-`n_publishers`는 SQL로: `count(distinct coalesce(wire_origin, publisher))`. `stories.title`은 최고 등급 문서의 제목, 그 문서에 제목이 없으면 본문 앞 120자(`raw_documents.title`은 nullable 그대로).
+`n_publishers`는 SQL로: `count(distinct coalesce(wire_origin, publisher))`. 통신사 소스(`sources.wire` 있음)의 문서는 `wire_origin = sources.wire`로 저장해 원문·전재가 같은 키로 집계되게 한다 — `sources.wire` 값은 `wires.yaml` 키 중 하나여야 한다(로더가 검증). Neo4j Q3의 `coalesce(s.wire_origin, s.publisher)`도 같은 키를 받는다.
+
+`shingles(text, n=3)`의 토큰: 소문자화한 `\w+` 단어, 단 한자·가나는 글자 하나가 토큰(한글은 어절). 토큰이 n개 이하면 전체가 shingle 하나, 토큰이 없으면 빈 목록. Story 임계 6·전재 임계 3은 이 정의에 대한 값이다. "먼저 수집된 문서"는 id(ULID)가 더 작은 문서다. `stories.title`은 최고 등급 문서의 제목, 그 문서에 제목이 없으면 본문 앞 120자(`raw_documents.title`은 nullable 그대로).
 
 ### 1.5 chunker
 
@@ -193,15 +195,19 @@ def ingest_flow(now: datetime | None = None):
         for raw in raws:
             if exists(url_hash(raw.url)): continue       # 멱등
             try: doc = normalize(raw, spec)
-            except PermanentError as e: insert_skipped(raw, e); continue
+            except SkippedDocError as e: insert_skipped(raw, e, spec); continue      # status=skipped, skip_reason
+            except PermanentError: failed.append(raw); continue                     # 저장 안 함
             doc.story_id = assign_story(doc, recent_story_heads(72h))
             doc.wire_origin = detect_wire(doc, story_docs(doc.story_id), WIRES)
             insert_document(doc); upsert_story(doc)
             for c in chunk(doc): insert_chunk(c)
             set_status(doc.id, "chunked")
-        mark_ok(spec)
+        mark_ok(spec, at=min([r.published_at for r in failed if r.published_at] + [now]) if failed else now)
+        # 문서 실패가 있으면 last_ok_at을 실패 문서의 가장 이른 발행일로 둬 다음 실행이 다시 가져오게 한다(발행일 없으면 now). fail_count는 소스 실패에만
     extract_flow()                                       # 서브플로
 ```
+
+`store` 함수(`domino_ingest/store.py`): `due_sources(now) -> list[(SourceSpec, SourceState)]`, `exists(url_hash)`, `known_url_hashes(source_id)`, `source_publishers()`, `insert_document(doc)`, `insert_skipped(raw, e: SkippedDocError, spec)`, `upsert_story(doc)`, `recent_story_heads(window)`, `story_docs(story_id)`, `insert_chunk(c)`, `set_status(doc_id, status)`, `mark_ok(spec, *, at)`, `mark_fail(spec, error)`. 전부 선택 인자 `conn=`를 받는다. `upsert_sources`는 `enabled`를 덮어쓰지 않는다(운영 상태 — 신규 행만 YAML 값).
 
 ## 2. `domino_extract`
 
