@@ -14,7 +14,7 @@
 
 ### A. Week 1 이월 — 무인 실행(스케줄)을 켜기 전에 닫는 것
 
-- [ ] T1 — 레포 루트 — import-linter에 `flows` 편입·`langfuse` 금지(L11), CI integration job(L8)
+- [x] (e1aa1c3) T1 — 레포 루트 — import-linter에 `flows` 편입·`langfuse` 금지(L11), CI integration job(L8)
   - 명세: tech-phase0.md §7.1, §7.5 · CLAUDE.md 규칙 4·5 · review week-1 L8·L11 · 결정 W2-14
   - 산출물: `pyproject.toml`(`[tool.importlinter]` `root_packages`에 `flows`, forbidden 계약 `source_modules`에 `flows`, `forbidden_modules`에 `langfuse` 추가 — `flows`가 패키지로 인식 안 되면 `flows/__init__.py` 추가), `.github/workflows/ci.yml`(`lint-unit` 뒤 `integration` job: `needs: lint-unit`, `uv sync --frozen` → `uv run pytest tests/integration`, tiktoken 캐시 `actions/cache`로 `~/.cache/domino/tiktoken`)
   - 완료 기준: `uv run lint-imports` 계약 2개 KEPT이고 `flows`가 대상에 들어 있음(임시로 `flows/ingest_flow.py`에 `import httpx`를 넣으면 BROKEN이 되는지 로컬 1회 확인 후 되돌림 — 커밋 본문에 결과 1줄); push 후 `gh run list --limit 1`이 `completed success`이고 `gh run view`에 `integration` job이 있음; `make test` 초록
