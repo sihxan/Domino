@@ -18,6 +18,8 @@ class DominoError(Exception): ...
 class TransientError(DominoError): ...        # 재시도 대상 (네트워크·429·5xx)
 class PermanentError(DominoError): ...        # 재시도 금지 (스키마·파싱·규칙 위반)
 class BudgetExceeded(PermanentError): ...
+@dataclass
+class GateFailure: code: str; detail: str  # domino_report.gate가 import (§6.6) — report에 두면 core←report 순환
 class GateFailed(PermanentError):
     def __init__(self, failures: list[GateFailure]): ...
 ```
@@ -31,7 +33,7 @@ def det_id(prefix: str, *parts: str) -> str   # f"{prefix}_{sha1('|'.join(parts)
 KST = ZoneInfo("Asia/Seoul")
 def now_utc() -> datetime
 def report_date(now: datetime | None = None) -> date          # KST 기준 오늘
-def asof_for(report_date: date) -> datetime                   # 06:00 KST → UTC
+def asof_for(report_date: date) -> datetime                   # settings.report_hour_kst(기본 6)시 KST → UTC — report_flow cron도 같은 값에서 생성
 def to_kst(dt: datetime) -> datetime
 ```
 
@@ -139,12 +141,13 @@ def fetch_html(url: str, *, timeout: float = 20) -> tuple[str, dict]:
 ```python
 def normalize(raw: RawDoc, spec: SourceSpec) -> Document:
     """
-    1) text, published_at = trafilatura.extract(html, include_comments=False, favor_precision=True) + metadata
-    2) text가 300자 미만이면 PermanentError("too_short")  → status=skipped
-    3) lang = spec.lang 또는 langdetect (혼합 문서는 spec 우선)
-    4) doc_type: kind→매핑 (edgar/dart→FILING, rss(중앙은행·정부)→RELEASE, 그 외 NEWS)
-    5) simhash = simhash64(shingles(text[:2000], n=3))
-    6) snapshot_key = f"raw/{yyyy}/{mm}/{doc_id}.html", snapshot_sha = sha256(html) → S3 put (불변, 덮어쓰기 금지)
+    1) doc_id = new_id("doc"); snapshot_key = f"raw/{yyyy}/{mm}/{doc_id}.html", snapshot_sha = sha256(html) → S3 put (불변, 덮어쓰기 금지).
+       snapshot 저장 경로는 여기 하나뿐 — skipped 문서도 이 단계를 먼저 거친다
+    2) text, published_at = trafilatura.extract(html, include_comments=False, favor_precision=True) + metadata
+    3) text가 300자 미만이면 PermanentError("too_short")  → status=skipped (예외가 doc_id·snapshot_key·snapshot_sha를 싣고 insert_skipped가 그대로 쓴다)
+    4) lang = spec.lang 또는 langdetect (혼합 문서는 spec 우선)
+    5) doc_type: edgar/dart→FILING; kind ∈ {rss, html} ∧ spec.grade == "A" ∧ spec.wire is None → RELEASE; 그 외 NEWS
+    6) simhash = simhash64(shingles(text[:2000], n=3))
     """
 ```
 
@@ -165,7 +168,7 @@ def detect_wire(doc: Document, same_story_docs: list[Document], wires: WireRules
     """
 ```
 
-`n_publishers`는 SQL로: `count(distinct coalesce(wire_origin, publisher))`.
+`n_publishers`는 SQL로: `count(distinct coalesce(wire_origin, publisher))`. `stories.title`은 최고 등급 문서의 제목, 그 문서에 제목이 없으면 본문 앞 120자(`raw_documents.title`은 nullable 그대로).
 
 ### 1.5 chunker
 
@@ -182,11 +185,10 @@ def chunk(doc: Document, *, max_tokens: int = 512, overlap: int = 64) -> list[Ch
 ```python
 @flow(name="ingest", timeout_seconds=600)
 def ingest_flow(now: datetime | None = None):
-    specs = due_sources(now)                           # cadence 도래 + enabled
-    for spec in specs:
+    for spec, state in due_sources(now):               # cadence 도래 + enabled; state = SourceState(last_ok_at, fail_count)
         try:
-            raws = CRAWLERS[spec.parser]().fetch(spec, since=spec.last_ok_at or now - 24h)
-        except TransientError: mark_fail(spec); continue
+            raws = CRAWLERS[spec.parser]().fetch(spec, since=state.last_ok_at or now - 24h)
+        except DominoError: mark_fail(spec); continue    # Transient·Permanent 모두 그 소스만 건너뜀, fail_count += 1 (연속 5회면 enabled=false)
         for raw in raws:
             if exists(url_hash(raw.url)): continue       # 멱등
             try: doc = normalize(raw, spec)
@@ -372,7 +374,6 @@ def ground(quote: str, text: str) -> tuple[int, int] | None:
 class ValidatedTriple(CausalTriple):
     chunk_id: str; char_start: int; char_end: int
     is_correlation_only: bool
-    evidence_id: str                                      # det_id("ev", chunk_id, quote)
     dropped_reason: str | None = None                     # 내부용, 저장 안 함
 
 HEDGE = load_yaml("hedge_lexicon.yaml")   # {en: [could, may, might, expected to, likely, forecast, potential], ko: [전망, 가능성, 우려, 예상, 관측, 듯]}
@@ -388,7 +389,7 @@ def validate(res: ExtractionResult, chunk: Chunk, src: SourceSpec) -> tuple[list
         ct = "attribution" if (src.state_controlled and t.claim_type == "fact" and looks_attributive(t.quote)) else t.claim_type
         out.append(ValidatedTriple(**t.model_dump(exclude={"relation_kind","claim_type"}), relation_kind=rk, claim_type=ct,
                    chunk_id=chunk.id, char_start=chunk.char_start+g[0], char_end=chunk.char_start+g[1],
-                   is_correlation_only=(rk != "CAUSAL"), evidence_id=det_id("ev", chunk.id, t.quote)))
+                   is_correlation_only=(rk != "CAUSAL")))   # evidence_id는 resolve 뒤 GraphTriple에서 (§3.3)
     if len(res.triples) and len(drops)/len(res.triples) > 0.3: raise PermanentError("grounding_rate_low")   # chunk 재추출 1회
     return out, drops
 ```
@@ -467,7 +468,7 @@ Answer with JSON only.
 | `vector_search_entities(vec, k, type, region_in) -> list[Scored]` | `CALL db.index.vector.queryNodes('entity_embedding', $k, $vec)` + 필터 | `canonical_of IS NULL`만 |
 | `create_entity(ref, vec) -> str` | `CREATE (:Entity {...})` | `(name,type,region)` UNIQUE 충돌 시 기존 반환 |
 | `add_alias(entity_id, alias, decided_by, sim)` | `MATCH ... SET e.aliases = e.aliases + $alias` + `ALIAS_OF` | — |
-| `upsert_chunk(triples: list[GraphTriple], chunk, src)` | Q2 반복 + Q3 (단일 트랜잭션) | `GraphTriple` = ValidatedTriple + cause\_id/effect\_id/target\_ids + source/story 필드 + evidence\_embedding |
+| `upsert_chunk(triples: list[GraphTriple], chunk, src)` | Q2 반복 + Q3 (단일 트랜잭션) | `GraphTriple` = ValidatedTriple + cause\_id/effect\_id/target\_ids + source/story 필드 + evidence\_embedding + `evidence_id = det_id("ev", chunk_id, quote, cause_id, effect_id, direction)` (resolve 뒤 계산 — 같은 quote가 받치는 엣지마다 Evidence 1개) |
 | `upsert_event(hint, chunk, triples) -> str` | `MERGE (ev:Event {id: det_id('evt', story_id, title_norm)})` + `TRIGGERED` (triples의 cause 엔티티들) | `salience`는 story의 `n_publishers`/10 clip 1.0 |
 | `promote(edge_id)` | Q3 | upsert 안에서 호출 |
 | `rescore_all(asof)` | `q_rescore.cypher` — Evidence·Source 집계 후 Python `confidence()` 적용, `SET` | 야간 |
@@ -892,8 +893,7 @@ def slice(cg: ClaimGraph, persona: Persona) -> SlicedReport:
 ### 6.6 게이트 (`gate.py`, 순수 함수)
 
 ```python
-@dataclass
-class GateFailure: code: str; detail: str
+from domino_core.errors import GateFailure   # 정의는 §0.2 (code: str; detail: str)
 
 BANNED = ["매수", "매도", "추천종목", "추천", "확실히", "목표가", "buy", "sell", "price target"]
 

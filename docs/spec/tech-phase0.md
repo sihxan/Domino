@@ -59,14 +59,14 @@ VPS 1대(4 vCPU · 16 GB · 160 GB SSD, Hetzner CPX41급)에 docker-compose로 �
 | `postgres` | postgres:16 | 문서·chunk·시계열·장부·리포트·job 상태 | 5432 (내부) | 2 GB |
 | `neo4j` | neo4j:5-community + GDS 플러그인 | 인과 그래프 | 7687/7474 (내부) | 4 GB heap |
 | `redis` | redis:7-alpine | 캐시·분산 락·rate limit | 6379 (내부) | 512 MB |
-| `minio` | minio/minio | 원문 snapshot(불변)·리포트 HTML | 9000 (내부) | 디스크 |
+| `minio` | bitnamilegacy/minio (Hub의 minio/minio 저장소 삭제) | 원문 snapshot(불변)·리포트 HTML | 9000 (내부) | 디스크 |
 | `embedder` | ghcr.io/huggingface/text-embeddings-inference:cpu | bge-m3 1024-dim | 8080 (내부) | 4 vCPU |
 | `prefect-server` | prefecthq/prefect:3 | 스케줄·UI | 4200 (내부, SSH 터널) | 1 GB |
 | `prefect-worker` | 자체 빌드 (모노레포) | 모든 flow 실행 | — | 2 GB |
 | `agent-runner` | 자체 빌드 + claude-agent-sdk | 리포트 agent (worker가 실행 트리거) | — | 1 GB |
 | `api` | 자체 빌드 (FastAPI) | 리포트·기록·검토큐 API, webhook | 8000 → Caddy 443 | 512 MB |
 | `web` | 자체 빌드 (Next.js) | Report view, 적중률, 검토큐 UI | 3000 → Caddy 443 | 512 MB |
-| `langfuse` | langfuse/langfuse (self-host) | LLM trace·eval | 3001 (내부) | 1 GB |
+| `langfuse` | langfuse/langfuse v2 (self-host, 같은 postgres의 `langfuse` DB) | LLM trace·eval | 3001 (내부) | 1 GB |
 | `caddy` | caddy:2 | TLS 터미네이션, 리버스 프록시 | 80/443 | — |
 
 ### 1.2 데이터 흐름 한 바퀴 (하루)
@@ -83,11 +83,11 @@ VPS 1대(4 vCPU · 16 GB · 160 GB SSD, Hetzner CPX41급)에 docker-compose로 �
 
 ## 2. 레포 구조·패키지 경계·설정
 
-모노레포 하나, Python 3.12, 패키지 매니저 `uv`, 워크스페이스. 프론트는 `apps/web`에 Node 22·pnpm. 의존 방향은 **아래로만**: `core ← ingest ← extract ← resolve ← graph ← signals ← agent ← report`. 상위 패키지가 하위를 import하고 역방향은 금지(`import-linter`로 CI에서 검사).
+모노레포 하나, Python 3.12, 패키지 매니저 `uv`, 루트 `pyproject.toml` 단일 프로젝트(`packages/domino_*`를 그 안의 패키지 디렉터리로). 프론트는 `apps/web`에 Node 22·pnpm. 의존 방향은 **아래로만**: `core ← ingest ← extract ← resolve ← graph ← signals ← agent ← report`. 상위 패키지가 하위를 import하고 역방향은 금지(`import-linter`로 CI에서 검사).
 
 ```text
 domino/
-├── pyproject.toml              # uv workspace, ruff, mypy(strict), pytest
+├── pyproject.toml              # uv 단일 프로젝트, ruff, mypy(strict), pytest, import-linter
 ├── docker-compose.yml          # §1.1의 12개 서비스
 ├── Caddyfile
 ├── .env.example
@@ -158,7 +158,7 @@ class Settings(BaseSettings):
     resolver_auto_cos: float = 0.92; resolver_judge_cos: float = 0.80
     confirm_min_publishers: int = 2
     # report
-    report_hour_kst: int = 6
+    report_hour_kst: int = 6          # asof_for()와 report_flow cron이 이 값 하나를 읽는다
     personas_path: Path = Path("packages/domino_report/personas.yaml")
     # delivery
     resend_api_key: SecretStr; from_email: str
@@ -169,7 +169,9 @@ class Settings(BaseSettings):
 
 ### 2.3 ID·시간 규약
 
-- 모든 ID는 ULID 문자열(정렬 가능, 26자), 접두어로 타입 표시: `doc_`, `sty_`, `chk_`, `tri_`, `ev_`, `ent_`, `evt_`, `src_`, `sl_`(storyline), `th_`, `sp_`(signpost), `pred_`, `rpt_`, `run_`.
+- 모든 ID는 ULID 문자열(정렬 가능, 26자), 접두어로 타입 표시: `doc_`, `sty_`, `chk_`, `tri_`, `ev_`, `ent_`, `evt_`, `src_`, `sl_`(storyline), `th_`, `sp_`(signpost), `pred_`, `rpt_`, `run_`, `rq_`(review_queue), `tr_`(trends).
+- `sources.id`는 예외로 ULID가 아니라 `sources/*.yaml`의 사람 키(`src_us_fed_press`)다 — §3.1 주석의 `src_<ulid>`는 이 뜻.
+- SimHash(64-bit unsigned)는 Postgres `bigint`(signed)에 two's complement로 저장하고, 읽을 때 unsigned로 복원한다.
 - 저장은 전부 UTC `timestamptz`, 표시만 KST. "오늘"은 `report_date = (now_utc → KST).date()`.
 - Neo4j의 시간 속성은 ISO-8601 UTC 문자열이 아니라 `datetime()` 타입으로 저장 (range index가 걸린다).
 
@@ -589,7 +591,7 @@ ORDER BY r.created_at DESC LIMIT 200
 | extract.llm | Chunk (is\_causal) | `extraction_runs` + ValidatedTriple\[\] | `(chunk_id, prompt_version)` | 스키마 실패 1회 재프롬프트, 재실패 시 drop + error 기록 | $2.0 |
 | extract.validate | ExtractionResult + chunk text | ValidatedTriple\[\] (grounding·규칙 통과) | — (순수 함수) | drop만, 실패 없음 | — |
 | resolve | ValidatedTriple의 cause/effect/targets 문자열 | canonical `entity_id` | `(name, type, region)` | judge 실패 시 신규 Entity 생성 + 검토 큐 | $1.0 |
-| graph.upsert | GraphTriple | Neo4j MERGE (Q2) + 승격 (Q3) | `evidence_id` (= hash(chunk\_id, quote)) | 트랜잭션, 실패 시 전체 롤백 + 재시도 3회 | — |
+| graph.upsert | GraphTriple | Neo4j MERGE (Q2) + 승격 (Q3) | `evidence_id` (= det\_id("ev", chunk\_id, quote, cause\_id, effect\_id, direction)) | 트랜잭션, 실패 시 전체 롤백 + 재시도 3회 | — |
 | graph.event | Chunk의 `event` 필드 | `Event` 노드 + `TRIGGERED` | `hash(story_id, title)` | 동일 | — |
 | storyline.link | 신규 Event | `IN_STORYLINE` | `event_id` | 규칙 → LLM → 검토 큐 | $0.5 |
 | signals.flows | `series` (fast axis) | `series_points` | `(series_id, observed_at, available_at)` | 소스별 독립, 실패 소스만 건너뜀 | — |
@@ -615,7 +617,7 @@ ORDER BY r.created_at DESC LIMIT 200
 
 **resolve** — 코드 명세서 §3. 임베딩은 `f"{name} ({type}, {region})"`. cos ≥ 0.92 → 자동 병합, 0.80\~0.92 → Sonnet judge, < 0.80 → 신규. judge `unsure` → 신규 Entity + 검토 큐.
 
-**graph.upsert** — 한 chunk의 트리플 전부를 한 트랜잭션. `evidence_id = "ev_" + sha1(chunk_id + quote)[:20]` 로 결정론적 — 재실행해도 Evidence가 중복되지 않는다. 승격(Q3)은 upsert 직후 같은 트랜잭션에서.
+**graph.upsert** — 한 chunk의 트리플 전부를 한 트랜잭션. `evidence_id = det_id("ev", chunk_id, quote, cause_id, effect_id, direction)`(= `"ev_" + sha1("|".join(parts))[:20]`, 코드 명세서 §0.3)로 결정론적 — 재실행해도 Evidence가 중복되지 않고, 한 quote가 여러 엣지(체인 A→B→C)를 받쳐도 엣지마다 Evidence가 따로 생긴다. cause/effect id는 resolve 뒤에 정해지므로 upsert 직전에 계산한다. 승격(Q3)은 upsert 직후 같은 트랜잭션에서.
 
 **storyline.link** — 규칙: `actors` 교집합 ≥ 2 **and** 직전 Event 60일 이내 → 자동. 아니면 Sonnet judge(코드 명세서 §3.4). Phase 0은 **기존 Storyline에 붙이기만**, 신규 생성은 검토 큐로.
 
@@ -638,7 +640,7 @@ ORDER BY r.created_at DESC LIMIT 200
 | `extract_flow` | ingest 끝에 호출 | 20분 | 1 | classify → llm → validate → resolve → graph.upsert/event |
 | `storyline_flow` | `5 * * * *` | 5분 | 1 | 신규 Event 연결 |
 | `nightly_flow` | `30 4 * * *` | 60분 | 1 | rescore → flows → trend → nowcast → signposts → PPR 캐시 → baseline\_q → 방향 모순 큐 |
-| `report_flow` | `0 6 * * *` | 40분 | 1 | agent → slice → editorial → render → gate → deliver |
+| `report_flow` | `0 {report_hour_kst} * * *` (기본 `0 6 * * *`, `settings.report_hour_kst`에서 생성) | 40분 | 1 | agent → slice → editorial → render → gate → deliver |
 | `health_flow` | `*/5 * * * *` | 1분 | 1 | 소스 실패·예산·디스크·큐 길이 체크, 알림 |
 
 `nightly_flow`가 06:00까지 안 끝나면 `report_flow`는 **어제 밤 결과로 진행**하고 헤더에 "신호 갱신 지연"을 표시한다. 리포트가 안 나가는 것보다 낫다.
