@@ -85,7 +85,7 @@
   - 추정: S (2h) · 모델: sonnet
   - 선행: T2
 
-- [ ] T11 — domino_ingest + flows — 적재·`ingest_flow`·종단 확인
+- [x] T11 (eb710fd) — domino_ingest + flows — 적재·`ingest_flow`·종단 확인
   - 명세: code-phase0.md §1.6 · tech-phase0.md §3.1, §5 표 ingest.fetch/story/chunk, §6.1 · decisions 2026-11-04 [ingest] skipped 행, extract_flow 호출
   - 산출물: `packages/domino_ingest/store.py`(`due_sources`, `exists`, `insert_document`, `insert_skipped`, `upsert_story`, `recent_story_heads`, `story_docs`, `insert_chunk`, `set_status`, `mark_ok`, `mark_fail`), `flows/ingest_flow.py`, `tests/integration/test_ingest_integration.py`
   - 완료 기준: `test_ingest_integration.py`(testcontainers postgres+minio, 크롤러는 T8 fixture로 mock) — 1회 실행 후 문서·chunk·story 생성, 2회 실행 후 행 수 불변(url_hash 멱등), 300자 미만은 `status='skipped'`, 연속 5회 실패 소스 `enabled=false`. **주말 기준 상태:** `make up && make migrate && make seed && uv run python flows/ingest_flow.py` 후 `select count(*) from raw_documents where status='chunked'` > 0
