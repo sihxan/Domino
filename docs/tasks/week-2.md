@@ -85,7 +85,7 @@
 
 ### B. Week 2 본 범위 — 추출
 
-- [ ] T7 — domino_core — `clients.llm.call`: Anthropic SDK·structured output·prompt caching·오류 매핑·비용·Redis 예산 (week-1 T12)
+- [x] (a3ca870) T7 — domino_core — `clients.llm.call`: Anthropic SDK·structured output·prompt caching·오류 매핑·비용·Redis 예산 (week-1 T12) (백엔드 방침 변경: c27edf4 · 실호출 스모크 보류 — 사용자가 LLM 인증 방식 검토 중)
   - 명세: code-phase0.md §0.4, §0.1 · tech-phase0.md §2.2(모델·예산 설정), §5 표 일 예산 열, §6.4 · **결정 W2-4, W2-5, W2-6**
   - 산출물: `packages/domino_core/clients/llm.py`(`LLMResult`, `call`), `packages/domino_core/pricing.yaml`(모델별 USD/MTok: input·output·cache_write·cache_read, `budgets:`·`monthly_cap_usd`), `tests/unit/test_llm_client.py`, `tests/golden/test_llm_smoke.py`(`@pytest.mark.golden`, 실호출 1회), `pyproject.toml`(`anthropic` 고정 버전)
   - 완료 기준 (테스트 먼저, SDK mock):
@@ -150,6 +150,7 @@
     - `make test` 초록
   - 추정: M (3h) · 모델: sonnet
   - 선행: T4, T8, T12
+  - 메모(T7): worker 이미지에서 `llm_backend=claude_code`가 돌려면 — `uv sync`가 `claude-agent-sdk==0.2.178`의 manylinux wheel(동봉 CLI 2.1.318, 약 150 MB, glibc 이미지 필요 — Node 불필요)을 설치하는지 확인, `.env`의 `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` 값)을 worker로 전달(`env_file`), CLI가 `~/.claude`를 쓰므로 쓰기 가능한 `HOME`, `LLM_BACKEND=claude_code` 유지(`ANTHROPIC_API_KEY`는 env 허용 목록 때문에 CLI에 전달되지 않음 — decisions T7). 인증 결정 전까지 보류
 
 ### C. Week 2 본 범위 — gold 30 첫 측정
 
