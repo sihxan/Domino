@@ -21,7 +21,7 @@ def get_engine(settings: Settings | None = None) -> Engine:
     if settings is None and _engine is not None:
         return _engine
     s = settings or default_settings()
-    engine = create_engine(s.pg_dsn, pool_pre_ping=True)
+    engine = create_engine(s.pg_dsn.get_secret_value(), pool_pre_ping=True, hide_parameters=True)
     if settings is None:
         _engine = engine
     return engine

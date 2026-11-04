@@ -11,6 +11,7 @@ import httpx
 import neo4j.exceptions as neo4j_exc
 import pytest
 import redis as redis_sdk
+import sqlalchemy as sa
 import sqlalchemy.exc as sa_exc
 from botocore.exceptions import ClientError, EndpointConnectionError
 from pydantic import SecretStr
@@ -25,11 +26,11 @@ from domino_core.settings import Settings
 def cfg() -> Settings:
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
-        pg_dsn="postgresql+psycopg://u:p@localhost:5432/domino",
+        pg_dsn=SecretStr("postgresql+psycopg://u:p@localhost:5432/domino"),
         neo4j_uri="bolt://localhost:7687",
         neo4j_user="neo4j",
         neo4j_password=SecretStr("neo4j-secret-value"),
-        redis_url="redis://localhost:6379/0",
+        redis_url=SecretStr("redis://localhost:6379/0"),
         s3_endpoint="http://localhost:9000",
         s3_key=SecretStr("s3-key-value"),
         s3_secret=SecretStr("s3-secret-value"),
@@ -240,6 +241,19 @@ def test_db_engine_uses_pg_dsn(cfg: Settings) -> None:
     with patch.object(db, "create_engine") as factory:
         db.get_engine(cfg)
     assert factory.call_args.args == ("postgresql+psycopg://u:p@localhost:5432/domino",)
+    assert factory.call_args.kwargs["hide_parameters"] is True
+
+
+def test_engine_hides_parameters(cfg: Settings) -> None:
+    """L4: SQLAlchemy errors must not carry bind values (document text) in their message."""
+    real_create_engine = sa.create_engine
+    with patch.object(db, "create_engine", lambda url, **kw: real_create_engine("sqlite://", **kw)):
+        engine = db.get_engine(cfg)
+    secret = "BODY-BODY-secret-document-text"
+    with pytest.raises(sa_exc.StatementError) as info, engine.connect() as conn:
+        conn.execute(sa.text("SELECT :v"), {"v": [secret]})  # sqlite cannot bind a list
+    assert secret not in str(info.value)
+    assert "[parameters:" not in str(info.value)
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""Alembic environment: the database URL comes from `Settings().pg_dsn`; schema is raw SQL (no autogenerate)."""
+"""Alembic environment: the DB URL is `Settings().pg_dsn` (SecretStr); schema is raw SQL (no autogenerate)."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ target_metadata = None
 
 def run_migrations_offline() -> None:
     """Emit SQL to stdout instead of connecting."""
-    context.configure(url=Settings().pg_dsn, target_metadata=target_metadata, literal_binds=True)  # type: ignore[call-arg]
+    context.configure(url=Settings().pg_dsn.get_secret_value(), target_metadata=target_metadata, literal_binds=True)  # type: ignore[call-arg]
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
     """Run migrations in one transaction on a real connection."""
-    engine = create_engine(Settings().pg_dsn)  # type: ignore[call-arg]
+    engine = create_engine(Settings().pg_dsn.get_secret_value())  # type: ignore[call-arg]
     try:
         with engine.connect() as connection:
             context.configure(connection=connection, target_metadata=target_metadata)

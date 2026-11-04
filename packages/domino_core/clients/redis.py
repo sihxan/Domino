@@ -20,7 +20,7 @@ def get_redis(settings: Settings | None = None) -> redis.Redis:
     if settings is None and _client is not None:
         return _client
     s = settings or default_settings()
-    client = redis.Redis.from_url(s.redis_url, decode_responses=True)
+    client = redis.Redis.from_url(s.redis_url.get_secret_value(), decode_responses=True)
     if settings is None:
         _client = client
     return client

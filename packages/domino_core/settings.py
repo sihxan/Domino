@@ -6,21 +6,22 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from domino_core.errors import PermanentError
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", protected_namespaces=(), env_ignore_empty=True)
 
     env: Literal["dev", "prod"] = "dev"
-    tz: str = "Asia/Seoul"
     # stores
-    pg_dsn: str  # postgresql+psycopg://...
+    pg_dsn: SecretStr  # postgresql+psycopg://... (password included)
     neo4j_uri: str
     neo4j_user: str
     neo4j_password: SecretStr
-    redis_url: str
+    redis_url: SecretStr  # password may be included
     s3_endpoint: str
     s3_bucket: str = "domino"
     s3_key: SecretStr
@@ -54,6 +55,22 @@ class Settings(BaseSettings):
     resend_api_key: SecretStr
     from_email: str
     beta_list_path: Path = Path("beta.yaml")
+
+
+class _ReportHour(BaseSettings):
+    """The one setting `asof_for` needs; same sources (env, `.env`) as `Settings`, no required fields."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
+
+    report_hour_kst: int = 6
+
+
+def get_report_hour_kst() -> int:
+    """`REPORT_HOUR_KST` (default 6) without building the full `Settings` — pure code paths need no other env."""
+    try:
+        return _ReportHour().report_hour_kst
+    except ValidationError as e:
+        raise PermanentError(f"invalid REPORT_HOUR_KST: {e.errors()[0]['msg']}") from e
 
 
 @lru_cache(maxsize=1)

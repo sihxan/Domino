@@ -10,11 +10,11 @@ from pydantic import SecretStr
 from domino_core.settings import Settings, get_settings
 
 REQUIRED_ENV = {
-    "PG_DSN": "postgresql+psycopg://u:p@localhost:5432/domino",
+    "PG_DSN": "postgresql+psycopg://dbuser:pg-pass-value@localhost:5432/domino",
     "NEO4J_URI": "bolt://localhost:7687",
     "NEO4J_USER": "neo4j",
     "NEO4J_PASSWORD": "neo4j-secret-value",
-    "REDIS_URL": "redis://localhost:6379/0",
+    "REDIS_URL": "redis://:redis-pass-value@localhost:6379/0",
     "S3_ENDPOINT": "http://localhost:9000",
     "S3_KEY": "s3-key-value",
     "S3_SECRET": "s3-secret-value",
@@ -26,6 +26,8 @@ REQUIRED_ENV = {
     "FROM_EMAIL": "report@example.com",
 }
 SECRET_VALUES = [
+    "pg-pass-value",
+    "redis-pass-value",
     "neo4j-secret-value",
     "s3-key-value",
     "s3-secret-value",
@@ -37,7 +39,7 @@ SECRET_VALUES = [
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ["ENV", "TZ", "MODEL_EXTRACT", "MODEL_JUDGE", "MODEL_LEAD", "MODEL_WORKER", "MODEL_EDITORIAL"]:
+    for key in ["ENV", "MODEL_EXTRACT", "MODEL_JUDGE", "MODEL_LEAD", "MODEL_WORKER", "MODEL_EDITORIAL"]:
         monkeypatch.delenv(key, raising=False)
     for key, value in REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
@@ -49,7 +51,8 @@ def make() -> Settings:
 
 def test_built_from_env(env: None) -> None:
     s = make()
-    assert s.pg_dsn == REQUIRED_ENV["PG_DSN"]
+    assert s.pg_dsn.get_secret_value() == REQUIRED_ENV["PG_DSN"]
+    assert s.redis_url.get_secret_value() == REQUIRED_ENV["REDIS_URL"]
     assert s.neo4j_uri == REQUIRED_ENV["NEO4J_URI"]
     assert s.from_email == REQUIRED_ENV["FROM_EMAIL"]
     assert s.anthropic_api_key.get_secret_value() == "anthropic-secret-value"
@@ -74,7 +77,6 @@ def test_missing_required_fails(env: None, monkeypatch: pytest.MonkeyPatch) -> N
 def test_defaults_match_tech_spec(env: None) -> None:
     s = make()
     assert s.env == "dev"
-    assert s.tz == "Asia/Seoul"
     assert s.s3_bucket == "domino"
     assert s.embedder_url == "http://embedder:8080"
     assert s.model_extract == "claude-haiku-5-5"
@@ -123,6 +125,8 @@ def test_empty_process_env_keeps_default(env: None, monkeypatch: pytest.MonkeyPa
 def test_secrets_are_secretstr(env: None) -> None:
     s = make()
     for field in [
+        "pg_dsn",
+        "redis_url",
         "neo4j_password",
         "s3_key",
         "s3_secret",
@@ -156,3 +160,22 @@ def test_default_settings_is_the_process_wide_get_settings(env: None) -> None:
     from domino_core.clients import default_settings
 
     assert default_settings() is get_settings()
+
+
+def test_dsn_not_in_repr(env: None) -> None:
+    """L5/⑦: the DSNs carry passwords; neither repr, str nor model_dump text may show them."""
+    s = make()
+    assert isinstance(s.pg_dsn, SecretStr)
+    assert isinstance(s.redis_url, SecretStr)
+    text = repr(s) + str(s) + repr(s.model_dump()) + s.model_dump_json()
+    assert "pg-pass-value" not in text
+    assert "redis-pass-value" not in text
+
+
+def test_settings_has_no_tz(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """⑧: the system TZ variable must not matter; time zone is the timeutil.KST constant."""
+    monkeypatch.setenv("TZ", "UTC")
+    assert "tz" not in Settings.model_fields
+    assert not hasattr(make(), "tz")
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    assert not [line for line in example.read_text(encoding="utf-8").splitlines() if line.startswith("TZ=")]

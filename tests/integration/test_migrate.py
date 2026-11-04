@@ -56,11 +56,11 @@ def neo4j_settings() -> Iterator[Settings]:
     with Neo4jContainer("neo4j:5.26.32-community", password=NEO4J_PASSWORD) as neo:
         yield Settings(  # type: ignore[call-arg]
             _env_file=None,
-            pg_dsn="postgresql+psycopg://unused",
+            pg_dsn=SecretStr("postgresql+psycopg://unused"),
             neo4j_uri=neo.get_connection_url(),
             neo4j_user="neo4j",
             neo4j_password=SecretStr(NEO4J_PASSWORD),
-            redis_url="redis://unused",
+            redis_url=SecretStr("redis://unused"),
             s3_endpoint="http://unused",
             s3_key=SecretStr("unused"),
             s3_secret=SecretStr("unused"),
