@@ -84,7 +84,6 @@ def test_upsert_updates_changed_values_by_id(engine: Engine) -> None:
             "cadence_min": 99,
             "state_controlled": True,
             "wire": "reuters",
-            "enabled": False,
         }
     )
     upsert_sources([changed], engine=engine)
@@ -104,7 +103,7 @@ def test_upsert_updates_changed_values_by_id(engine: Engine) -> None:
         99,
         True,
         "reuters",
-        False,
+        True,
     )
     assert count(engine) == 15
 
@@ -131,3 +130,35 @@ def test_upsert_preserves_operational_state(engine: Engine) -> None:
 def test_upsert_empty_list_is_noop(engine: Engine) -> None:
     assert upsert_sources([], engine=engine) == 0
     assert count(engine) == 0
+
+
+def enabled_of(engine: Engine, source_id: str) -> bool:
+    with engine.connect() as conn:
+        return bool(conn.execute(text("SELECT enabled FROM sources WHERE id = :id"), {"id": source_id}).scalar_one())
+
+
+def test_seed_keeps_disabled(engine: Engine) -> None:
+    specs = load_sources(ROOT / "sources")
+    upsert_sources(specs, engine=engine)
+    target = specs[0]
+    with connection(engine=engine) as conn:  # what `mark_fail` does after 5 consecutive failures
+        conn.execute(text("UPDATE sources SET enabled = false, fail_count = 5 WHERE id = :id"), {"id": target.id})
+    upsert_sources(specs, engine=engine)  # `make seed` again, YAML still says enabled: true
+    assert target.enabled is True
+    assert enabled_of(engine, target.id) is False
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT fail_count FROM sources WHERE id = :id"), {"id": target.id}).scalar_one() == 5
+    assert count(engine) == 15
+
+
+def test_new_row_takes_enabled_from_yaml(engine: Engine) -> None:
+    base = load_sources(ROOT / "sources")[0]
+    off = base.model_copy(update={"id": "src_us_new_off", "enabled": False})
+    on = base.model_copy(update={"id": "src_us_new_on", "enabled": True})
+    upsert_sources([off, on], engine=engine)
+    assert enabled_of(engine, "src_us_new_off") is False
+    assert enabled_of(engine, "src_us_new_on") is True
+    # re-seeding with flipped YAML values leaves both rows as they are
+    upsert_sources([off.model_copy(update={"enabled": True}), on.model_copy(update={"enabled": False})], engine=engine)
+    assert enabled_of(engine, "src_us_new_off") is False
+    assert enabled_of(engine, "src_us_new_on") is True
