@@ -106,7 +106,7 @@
   - 추정: S (1.5h) · 모델: opus
   - 선행: T7
 
-- [ ] T9 — domino_extract — 스키마·시스템 프롬프트 전문·`PROMPT_VERSION`·hedge·attribution 사전
+- [x] (1974979) T9 — domino_extract — 스키마·시스템 프롬프트 전문·`PROMPT_VERSION`·hedge·attribution 사전
   - 명세: code-phase0.md §2.1, §2.2, §2.5(`HEDGE`) · **결정 W2-8**
   - 산출물: `packages/domino_extract/{schema.py, hedge_lexicon.yaml, attribution_lexicon.yaml, lexicon.py}`, `packages/domino_extract/prompts/{__init__.py, extract_system.md}`(§2.2 코드 블록 글자 그대로), `tests/unit/test_schema.py`
   - 완료 기준 (테스트 먼저):
