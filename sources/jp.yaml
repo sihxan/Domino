@@ -1,0 +1,34 @@
+# sources/jp.yaml
+- id: src_jp_boj_whatsnew
+  country: JP
+  region: EA
+  belts: [semis]
+  publisher: Bank of Japan
+  grade: A
+  kind: rss
+  url: https://www.boj.or.jp/en/rss/whatsnew.xml
+  cadence_min: 30
+  parser: RssCrawler
+  lang: en
+- id: src_jp_fsa_news
+  country: JP
+  region: EA
+  belts: []
+  publisher: Financial Services Agency (JP)
+  grade: A
+  kind: rss
+  url: https://www.fsa.go.jp/fsaNewsListAll_rss2.xml
+  cadence_min: 60
+  parser: RssCrawler
+  lang: ja
+- id: src_jp_mof_news
+  country: JP
+  region: EA
+  belts: []
+  publisher: Ministry of Finance (JP)
+  grade: A
+  kind: rss
+  url: https://www.mof.go.jp/news.rss
+  cadence_min: 60
+  parser: RssCrawler
+  lang: ja

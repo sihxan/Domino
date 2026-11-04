@@ -1,0 +1,34 @@
+# sources/us.yaml
+- id: src_us_fed_press
+  country: US
+  region: NA
+  belts: [power, semis]
+  publisher: Federal Reserve
+  grade: A
+  kind: rss
+  url: https://www.federalreserve.gov/feeds/press_all.xml
+  cadence_min: 30
+  parser: RssCrawler
+  lang: en
+- id: src_us_sec_press
+  country: US
+  region: NA
+  belts: []
+  publisher: SEC
+  grade: A
+  kind: rss
+  url: https://www.sec.gov/news/pressreleases.rss
+  cadence_min: 60
+  parser: RssCrawler
+  lang: en
+- id: src_us_bls_latest
+  country: US
+  region: NA
+  belts: []
+  publisher: Bureau of Labor Statistics
+  grade: A
+  kind: rss
+  url: https://www.bls.gov/feed/bls_latest.rss
+  cadence_min: 60
+  parser: RssCrawler
+  lang: en

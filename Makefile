@@ -22,8 +22,9 @@ migrate:
 	uv run alembic upgrade head
 	uv run python -c "from domino_graph.ddl import apply_ddl; print(f'neo4j ddl: {apply_ddl()} statements')"
 
+# Week 1: sources only; theses/ and storylines/ are loaded in later weeks.
 seed:
-	@echo "make seed: implemented in week-1 T7" && exit 1
+	uv run python -m domino_ingest.sources
 
 golden:
 	@echo "make golden: not implemented yet" && exit 1

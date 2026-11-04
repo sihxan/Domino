@@ -1,0 +1,31 @@
+# 통신사 이름 → byline 정규식 목록 (본문 첫 300자에 매칭하면 전재로 본다)
+reuters:
+  - '^\(Reuters\)'
+  - '\(Reuters\) -'
+  - 'Reporting by .* Editing by'
+ap:
+  - '^\(AP\)'
+  - '\(AP\) [—-]'
+  - 'The Associated Press'
+afp:
+  - '\(AFP\)'
+  - '^AFP\b'
+yonhap:
+  - '\(서울=연합뉴스\)'
+  - '\([가-힣]+=연합뉴스\)'
+  - '\(Yonhap\)'
+kyodo:
+  - '\(Kyodo\)'
+  - '\(共同\)'
+  - '共同通信'
+cna:
+  - '\(CNA\)'
+  - '中央社'
+dpa:
+  - '\(dpa\)'
+  - '\(dpa-AFX\)'
+  - '^dpa\b'
+xinhua:
+  - '\(Xinhua\)'
+  - '新华社'
+  - '新華社'

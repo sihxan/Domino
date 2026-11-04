@@ -1,0 +1,34 @@
+# sources/kr.yaml
+- id: src_kr_bok_press
+  country: KR
+  region: EA
+  belts: [semis]
+  publisher: Bank of Korea
+  grade: A
+  kind: rss
+  url: https://www.bok.or.kr/portal/bbs/P0000559/news.rss?menuNo=200690
+  cadence_min: 30
+  parser: RssCrawler
+  lang: ko
+- id: src_kr_moef_press
+  country: KR
+  region: EA
+  belts: [semis]
+  publisher: Ministry of Economy and Finance (KR)
+  grade: A
+  kind: rss
+  url: https://www.moef.go.kr/com/detailRssTagService.do?bbsId=MOSFBBS_000000000028
+  cadence_min: 30
+  parser: RssCrawler
+  lang: ko
+- id: src_kr_msit_press
+  country: KR
+  region: EA
+  belts: [semis]
+  publisher: Ministry of Science and ICT (KR)
+  grade: A
+  kind: rss
+  url: https://www.msit.go.kr/user/rss/rss.do?bbsSeqNo=94
+  cadence_min: 60
+  parser: RssCrawler
+  lang: ko

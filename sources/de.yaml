@@ -1,0 +1,34 @@
+# sources/de.yaml
+- id: src_de_bbk_press
+  country: DE
+  region: EU
+  belts: [power]
+  publisher: Deutsche Bundesbank
+  grade: A
+  kind: rss
+  url: https://www.bundesbank.de/service/rss/de/633286/feed.rss
+  cadence_min: 30
+  parser: RssCrawler
+  lang: de
+- id: src_de_destatis_news
+  country: DE
+  region: EU
+  belts: [power]
+  publisher: Statistisches Bundesamt (Destatis)
+  grade: A
+  kind: rss
+  url: https://www.destatis.de/SiteGlobals/Functions/RSSFeed/DE/RSSNewsfeed/Aktuell.xml
+  cadence_min: 60
+  parser: RssCrawler
+  lang: de
+- id: src_de_bafin_press
+  country: DE
+  region: EU
+  belts: []
+  publisher: BaFin
+  grade: A
+  kind: rss
+  url: https://www.bafin.de/DE/service/rss/_function/RSS_Presse.xml?nn=150166
+  cadence_min: 60
+  parser: RssCrawler
+  lang: de

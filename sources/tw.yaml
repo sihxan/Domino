@@ -1,0 +1,34 @@
+# sources/tw.yaml
+- id: src_tw_cbc_news
+  country: TW
+  region: EA
+  belts: [semis]
+  publisher: Central Bank of the Republic of China (Taiwan)
+  grade: A
+  kind: rss
+  url: https://www.cbc.gov.tw/tw/rss-302-1.xml
+  cadence_min: 30
+  parser: RssCrawler
+  lang: zh
+- id: src_tw_fsc_press
+  country: TW
+  region: EA
+  belts: []
+  publisher: Financial Supervisory Commission (TW)
+  grade: A
+  kind: rss
+  url: https://www.fsc.gov.tw/RSS/Messages?serno=201202290009&language=chinese
+  cadence_min: 60
+  parser: RssCrawler
+  lang: zh
+- id: src_tw_dgbas_release
+  country: TW
+  region: EA
+  belts: [semis]
+  publisher: Directorate-General of Budget, Accounting and Statistics (TW)
+  grade: A
+  kind: rss
+  url: https://www.stat.gov.tw/OpenDataForm.aspx?s=284D8E258E07B321&isRssFeed=1
+  cadence_min: 60
+  parser: RssCrawler
+  lang: zh
