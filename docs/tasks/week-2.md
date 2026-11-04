@@ -140,7 +140,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T7, T11
 
-- [ ] T13 — flows — `extract_flow`·ingest 끝 트리거·extract deployment·종단 확인
+- [ ] T13 (코드 완료: 9aac26e · 실제 추출·종단 확인은 LLM 인증 결정 후) — flows — `extract_flow`·ingest 끝 트리거·extract deployment·종단 확인
   - 명세: code-phase0.md §2.6 · tech-phase0.md §5 extract 행, §6.1 `extract_flow` 20분·동시성 1 · **결정 W2-2, W2-9, W2-12**
   - 산출물: `flows/extract_flow.py`, `flows/ingest_flow.py`(끝에 extract 트리거 — 결정 W2-12), `flows/deploy.py`(`extract` deployment, 스케줄 없음, 동시성 1·`CANCEL_NEW`), `tests/integration/test_extract_integration.py`(testcontainers postgres+redis, `llm.call` mock)
   - 완료 기준:
