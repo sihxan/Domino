@@ -1,0 +1,4 @@
+# Hedge words: a CAUSAL triple whose quote contains one is demoted to SPECULATIVE (code-phase0.md §2.5).
+# Matched as substrings of quote.lower(), so entries are lowercase. Add languages here together with CAUSAL_HINTS (W2-10).
+en: [could, may, might, expected to, likely, forecast, potential]
+ko: [전망, 가능성, 우려, 예상, 관측, 듯]

@@ -1,0 +1,4 @@
+# Attribution cues: for a state_controlled source a "fact" triple whose quote contains one is relabelled
+# "attribution" (decision W2-8). Matched as substrings of quote.lower(), so entries are lowercase.
+en: [said, says, announced, stated, according to, claimed, told, noted, pledged]
+ko: [밝혔다, 발표, 말했다, 따르면, 강조했다, 주장, 언급]
