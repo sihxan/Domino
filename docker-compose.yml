@@ -1,0 +1,328 @@
+# Phase 0 runtime topology (tech-phase0.md §1.1). `api`, `web`, `agent-runner`, `caddy` are profile `app`.
+# Dev: ports are published on 127.0.0.1 only (tech §1.1 says "내부"; see decisions.md).
+name: domino
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: domino
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: domino
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U domino -d domino"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  neo4j:
+    <<: *restart
+    image: neo4j:5.26.32-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_PLUGINS: '["graph-data-science"]'
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 4G
+      NEO4J_server_memory_pagecache_size: 512m
+      NEO4J_dbms_security_procedures_unrestricted: gds.*
+      NEO4J_dbms_security_procedures_allowlist: gds.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_plugins:/plugins
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 5g
+
+  redis:
+    <<: *restart
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "400mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  minio:
+    <<: *restart
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    environment:
+      MINIO_ROOT_USER: ${S3_KEY:?set S3_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET:?set S3_SECRET in .env}
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:-domino}
+      MINIO_SCHEME: http
+    volumes:
+      - minio_data:/bitnami/minio/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  embedder:
+    <<: *restart
+    # TEI CPU images are linux/amd64 only; emulated on Apple Silicon (week-1 risk 1, decisions.md).
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    platform: linux/amd64
+    command: ["--model-id", "BAAI/bge-m3", "--port", "8080", "--max-batch-tokens", "4096", "--max-client-batch-size", "32"]
+    volumes:
+      - embedder_data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+
+  prefect-server:
+    <<: *restart
+    image: prefecthq/prefect:3.9.1-python3.12
+    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
+    environment:
+      PREFECT_HOME: /prefect
+      PREFECT_UI_API_URL: http://127.0.0.1:4200/api
+      # cryptography's bundled OpenSSL hits SIGILL (SME) on Apple M4 hosts; harmless elsewhere (decisions.md)
+      OPENSSL_armcap: "0"
+      TZ: ${TZ:-Asia/Seoul}
+    volumes:
+      - prefect_data:/prefect
+    ports:
+      - "127.0.0.1:4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4200/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  prefect-worker:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    image: domino-worker:dev
+    command: ["prefect", "worker", "start", "--pool", "default", "--type", "process"]
+    env_file: .env
+    # container-side addresses override the host-side values in .env
+    environment:
+      OPENSSL_armcap: "0"
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PG_DSN: postgresql+psycopg://domino:${POSTGRES_PASSWORD}@postgres:5432/domino
+      NEO4J_URI: bolt://neo4j:7687
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      EMBEDDER_URL: http://embedder:8080
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      postgres: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      prefect-server: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request as u; u.urlopen(os.environ['PREFECT_API_URL'] + '/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  langfuse:
+    <<: *restart
+    # v2 (single container, postgres only); v3 needs ClickHouse etc. (decisions.md)
+    image: langfuse/langfuse:2.95.11
+    environment:
+      DATABASE_URL: postgresql://domino:${POSTGRES_PASSWORD}@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET in .env}
+      SALT: ${LANGFUSE_SALT:?set LANGFUSE_SALT in .env}
+      TELEMETRY_ENABLED: "false"
+      HOSTNAME: 0.0.0.0
+      LANGFUSE_INIT_ORG_ID: domino
+      LANGFUSE_INIT_ORG_NAME: domino
+      LANGFUSE_INIT_PROJECT_ID: domino
+      LANGFUSE_INIT_PROJECT_NAME: domino
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY in .env}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY in .env}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@localhost.test}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set LANGFUSE_INIT_USER_PASSWORD in .env}
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:3001:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/public/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # ---- profile `app`: code arrives in Week 5~8, build contexts do not exist yet (decisions.md) ----
+
+  agent-runner:
+    <<: *restart
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: docker/agent-runner.Dockerfile
+    image: domino-agent-runner:dev
+    env_file: .env
+    environment:
+      PG_DSN: postgresql+psycopg://domino:${POSTGRES_PASSWORD}@postgres:5432/domino
+      NEO4J_URI: bolt://neo4j:7687
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      EMBEDDER_URL: http://embedder:8080
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      postgres: {condition: service_healthy}
+      neo4j: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import domino_agent"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  api:
+    <<: *restart
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: domino-api:dev
+    env_file: .env
+    environment:
+      PG_DSN: postgresql+psycopg://domino:${POSTGRES_PASSWORD}@postgres:5432/domino
+      NEO4J_URI: bolt://neo4j:7687
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      EMBEDDER_URL: http://embedder:8080
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      postgres: {condition: service_healthy}
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  web:
+    <<: *restart
+    profiles: [app]
+    build:
+      context: apps/web
+    image: domino-web:dev
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  caddy:
+    <<: *restart
+    profiles: [app]
+    image: caddy:2.11.7
+    environment:
+      DOMINO_DOMAIN: ${DOMINO_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api: {condition: service_healthy}
+      web: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_plugins:
+  redis_data:
+  minio_data:
+  embedder_data:
+  prefect_data:
+  caddy_data:
+  caddy_config:
