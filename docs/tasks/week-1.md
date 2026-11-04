@@ -61,7 +61,7 @@
   - 추정: M (2.5h) · 모델: sonnet
   - 선행: T5
 
-- [ ] T8 — domino_ingest — fetch_html·RssCrawler·HtmlListCrawler
+- [x] T8 (8b1331d) — domino_ingest — fetch_html·RssCrawler·HtmlListCrawler
   - 명세: code-phase0.md §1.2 · tech-phase0.md §5.1 ingest.fetch
   - 산출물: `packages/domino_ingest/crawlers/{__init__.py(CRAWLERS), base.py(Crawler, fetch_html), rss.py, html_list.py}`, `tests/unit/{test_fetch.py, test_crawlers.py}`, `tests/fixtures/ingest/{feed.xml, list.html, article.html}`
   - 완료 기준: `test_fetch.py` — robots disallow→`PermanentError`, 같은 도메인 연속 호출 간격 ≥ 2초(가짜 시계), 다른 도메인은 대기 없음, 4xx/5xx 매핑; `test_crawlers.py` — RSS fixture에서 `since` 이후 entry만 `RawDoc`으로, `spec.url#selector` 분리·링크 절대경로화. 네트워크 호출 0(http client mock)
