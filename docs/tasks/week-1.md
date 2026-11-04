@@ -33,7 +33,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T2
 
-- [ ] T4 — 레포 루트 — docker-compose·Dockerfile·Caddyfile·`make up`
+- [x] T4 (c5a1856) — 레포 루트 — docker-compose·Dockerfile·Caddyfile·`make up`
   - 명세: tech-phase0.md §1, §1.1 · decisions 2026-11-04 [root] compose profile, langfuse
   - 산출물: `docker-compose.yml`(12개 서비스, 볼륨, healthcheck, 리소스 상한; `api`·`web`·`agent-runner`·`caddy`는 profile `app`), `docker/worker.Dockerfile`, `Caddyfile`, `Makefile`의 `up`/`down`
   - 완료 기준: `make up` 후 `docker compose ps`에서 postgres·neo4j·redis·minio·prefect-server·langfuse가 `healthy`(embedder는 리스크 1 참고 — `running`이면 통과), `docker compose config -q` 무오류
