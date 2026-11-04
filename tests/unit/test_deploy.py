@@ -42,8 +42,28 @@ def test_ingest_deployment_points_at_the_flow_in_the_worker_image() -> None:
     assert d.storage is not None  # from_source: the worker runs the code at the repo path, not a pickled copy
 
 
-def test_only_ingest_is_deployed_in_week_2_t4() -> None:
-    assert [d.name for d in deploy.build_deployments()] == ["ingest"]  # extract arrives with T13
+def test_extract_deployment_has_no_schedule() -> None:
+    d = _by_name("extract")
+    assert d.flow_name == "extract"  # `prefect deployment ls` shows it as extract/extract (what ingest triggers, W2-12)
+    assert not d.schedules  # started by ingest_flow only, never by cron
+
+
+def test_extract_deployment_runs_one_at_a_time() -> None:
+    d = _by_name("extract")
+    assert d.concurrency_limit == 1
+    assert d.concurrency_options is not None
+    assert d.concurrency_options.collision_strategy == ConcurrencyLimitStrategy.CANCEL_NEW
+
+
+def test_extract_deployment_points_at_the_flow_in_the_worker_image() -> None:
+    d = _by_name("extract")
+    assert d.work_pool_name == "default"
+    assert d.entrypoint == "flows/extract_flow.py:extract_flow"
+    assert d.storage is not None
+
+
+def test_ingest_and_extract_are_the_deployments() -> None:
+    assert [d.name for d in deploy.build_deployments()] == ["ingest", "extract"]
 
 
 def test_main_registers_every_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,5 +74,5 @@ def test_main_registers_every_deployment(monkeypatch: pytest.MonkeyPatch) -> Non
         return "00000000-0000-0000-0000-000000000000"
 
     monkeypatch.setattr(RunnerDeployment, "apply", fake_apply)
-    assert deploy.register() == 1
-    assert applied == ["ingest"]
+    assert deploy.register() == 2
+    assert applied == ["ingest", "extract"]

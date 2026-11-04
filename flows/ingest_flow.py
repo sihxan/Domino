@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from prefect import flow
+from prefect.deployments import run_deployment
 
 from domino_core.clients.db import connection
 from domino_core.errors import DominoError, PermanentError, TransientError
@@ -34,6 +35,8 @@ FETCH_BACKOFF_S = 2.0  # wait 2 s, then 4 s, between attempts
 SOURCE_FETCH_BUDGET_S = 120  # one source's crawl, retries included
 FLOW_FETCH_BUDGET_S = 450  # the whole run: the 600 s limit minus 150 s for storing and the extract trigger
 MIN_SOURCE_BUDGET_S = 10  # with less than this left, the remaining sources are not started (they stay due)
+
+EXTRACT_DEPLOYMENT = "extract/extract"  # <flow name>/<deployment name>, registered by flows/deploy.py
 
 log = get_logger("flows.ingest")
 
@@ -128,6 +131,24 @@ def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: W
     log.info("source_ok", n_fetched=len(raws), truncated=truncated, last_ok_at=mark_at.isoformat(), **counts)
 
 
+def _trigger_extract() -> None:
+    """Start the `extract` deployment and do not wait for it (W2-12). Off unless `EXTRACT_ENABLED` is set.
+
+    The deployment runs one at a time and cancels a new run while one is going, so a trigger during a long extract is
+    harmless. A trigger that fails (no deployment, e.g. a manual run on a host) never fails the ingest.
+    """
+    log = get_logger("flows.ingest")  # bound per call so the stderr target is current (tests redirect it)
+    if not get_settings().extract_enabled:
+        log.info("extract_trigger_skipped", hint="EXTRACT_ENABLED is off")
+        return
+    try:
+        run_deployment(EXTRACT_DEPLOYMENT, timeout=0)
+    except Exception as e:  # whatever the Prefect client raises, the documents are already stored
+        log.warning("extract_trigger_failed", error_type=type(e).__name__, error=str(e))
+        return
+    log.info("extract_triggered", deployment=EXTRACT_DEPLOYMENT)
+
+
 @flow(name="ingest", timeout_seconds=600)
 def ingest_flow(now: datetime | None = None) -> None:
     """Fetch every due source (longest-waiting first) within the time budgets; store documents with story and chunks."""
@@ -147,6 +168,7 @@ def ingest_flow(now: datetime | None = None) -> None:
             with bind_context(key=spec.id):
                 _ingest_source(spec, state, now, wires, min(SOURCE_FETCH_BUDGET_S, left))
         log.info("ingest_done", n_due=len(due))
+        _trigger_extract()
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # pipeline
     chunk_tokens: int = 512
     chunk_overlap: int = 64
+    extract_enabled: bool = False  # off until the LLM authentication is decided (ingest trigger and extract_flow)
     simhash_threshold: int = 6  # 64-bit Hamming distance
     resolver_auto_cos: float = 0.92
     resolver_judge_cos: float = 0.80
