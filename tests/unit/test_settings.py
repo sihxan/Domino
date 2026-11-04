@@ -96,6 +96,30 @@ def test_defaults_match_tech_spec(env: None) -> None:
     assert s.beta_list_path == Path("beta.yaml")
 
 
+def test_env_example_copy_keeps_defaults(env: None, tmp_path: Path) -> None:
+    """A .env made from .env.example with only required keys filled must not override defaults with ''."""
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    lines = [
+        f"{key}{REQUIRED_ENV[key[:-1]]}" if key[:-1] in REQUIRED_ENV else key
+        for key in example.read_text(encoding="utf-8").splitlines()
+    ]
+    env_file = tmp_path / ".env"
+    env_file.write_text("\n".join(lines), encoding="utf-8")
+    s = Settings(_env_file=env_file)  # type: ignore[call-arg]
+    assert s.env == "dev"
+    assert s.model_extract == "claude-haiku-5-5"
+    assert s.chunk_tokens == 512
+    assert s.budget_extract_daily == 2.0
+
+
+def test_empty_process_env_keeps_default(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_LEAD", "")
+    monkeypatch.setenv("CHUNK_OVERLAP", "")
+    s = make()
+    assert s.model_lead == "claude-sonnet-5-5"
+    assert s.chunk_overlap == 64
+
+
 def test_secrets_are_secretstr(env: None) -> None:
     s = make()
     for field in [

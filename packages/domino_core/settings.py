@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", protected_namespaces=())
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", protected_namespaces=(), env_ignore_empty=True)
 
     env: Literal["dev", "prod"] = "dev"
     tz: str = "Asia/Seoul"
