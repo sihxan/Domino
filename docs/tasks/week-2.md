@@ -129,7 +129,7 @@
   - 추정: M (2h) · 모델: sonnet
   - 선행: T9, T10
 
-- [ ] T12 — domino_extract — classifier·extractor(재시도 1회)·extract store
+- [x] (9d6df01) T12 — domino_extract — classifier·extractor(재시도 1회)·extract store
   - 명세: code-phase0.md §2.3, §2.6(`wrap`·`retry_once_or_drop`·`record_run`), §2.2 마지막 줄(사용자 메시지 형식) · tech-phase0.md §3.2 `extraction_runs`·`extraction_errors`, §5 extract.classify·extract.llm 행 · **결정 W2-9, W2-10, W2-11**
   - 산출물: `packages/domino_extract/{classifier.py, extractor.py, store.py}`(`store`: `new_chunks(limit)`, `run_exists(chunk_id, prompt_version)`, `set_is_causal`, `set_chunk_status`, `record_run`, `record_errors`), `tests/unit/{test_classifier.py, test_extractor.py}`, `tests/integration/test_extract_store.py`
   - 완료 기준 (테스트 먼저, `llm.call` mock):
