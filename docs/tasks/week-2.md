@@ -21,7 +21,7 @@
   - 추정: S (1.5h — L11 0.5h + L8 1h) · 모델: sonnet
   - 선행: 없음 (pyproject를 먼저 바꾸므로 이번 주 첫 merge)
 
-- [ ] T2 — flows + domino_ingest — ingest 실패 경로: 문서 실패 시 `last_ok_at`(①·H1·L7), 소스 catch-all(L3), chunk 설정 연결(L1), 통신사 소스 `wire_origin`(③ flow 쪽), `skip_reason`(⑩)
+- [x] (9f3c608) T2 — flows + domino_ingest — ingest 실패 경로: 문서 실패 시 `last_ok_at`(①·H1·L7), 소스 catch-all(L3), chunk 설정 연결(L1), 통신사 소스 `wire_origin`(③ flow 쪽), `skip_reason`(⑩)
   - 명세: code-phase0.md §1.4(통신사 소스 문단), §1.6(개정 의사코드·store 목록) · tech-phase0.md §2.2 `chunk_tokens`/`chunk_overlap`, §3.1 마이그레이션 0002 · decisions ①·③·⑩, 결정 W2-15
   - 산출물: `flows/ingest_flow.py`(① `mark_ok(at=min(실패 문서 published_at…, now))`; 소스 루프 `except Exception` → `mark_fail(spec, f"{type(e).__name__}: {e}")` + `log.exception`; 문서 루프의 예기치 못한 예외는 `PermanentError`와 같은 "실패 문서" 경로; `chunk(doc, max_tokens=settings.chunk_tokens, overlap=settings.chunk_overlap)`; `doc.wire_origin = spec.wire or detect_wire(...)`), `migrations/versions/0002_skip_reason.py`(tech §3.1 SQL 그대로, downgrade는 DROP COLUMN), `packages/domino_ingest/store.py`(`insert_skipped`가 `error.reason`을 `skip_reason`에), `tests/integration/test_ingest_integration.py`, `tests/integration/test_migrate.py`
   - 완료 기준 (테스트 먼저):
