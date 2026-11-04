@@ -7,6 +7,7 @@ dependencies = [
     "alembic==1.20.1",
     "boto3==1.43.123",
     "httpx==0.28.1",
+    "langdetect==1.0.9",
     "neo4j==5.28.8",
     "psycopg[binary]==3.3.7",
     "pydantic==2.14.2",
@@ -16,6 +17,7 @@ dependencies = [
     "redis==8.1.0",
     "sqlalchemy==2.1.7",
     "structlog==26.1.0",
+    "trafilatura==2.3.1",
 ]
 
 [dependency-groups]
@@ -77,7 +79,7 @@ explicit_package_bases = true
 files = ["packages", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "langdetect", "langdetect.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
