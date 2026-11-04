@@ -59,7 +59,7 @@
   - 추정: S (2h) · 모델: sonnet
   - 선행: T2, T3 (H1·H2를 닫기 전에 무인 실행을 켜지 않는다)
 
-- [ ] T5 — domino_ingest — 통신사 키 검증(③ 로더), `make seed`가 `enabled`를 안 덮음(④), 전재 비교에서 제목 제외(decisions:104), simhash 동어반복 테스트(L6)
+- [x] T5 (14c876b, merge 3165ede) — domino_ingest — 통신사 키 검증(③ 로더), `make seed`가 `enabled`를 안 덮음(④), 전재 비교에서 제목 제외(decisions:104), simhash 동어반복 테스트(L6)
   - 명세: code-phase0.md §1.4, §1.6 끝 `upsert_sources` 문장 · decisions ③·④·:104 · review L2·L6, "A 프롬프트에 넣을 한 줄" 3
   - 산출물: `packages/domino_ingest/sources.py`(`load_sources`가 `wire`가 있으면 `wires.yaml` 키인지 검증 → 아니면 `PermanentError`; `upsert_sources`의 `DO UPDATE SET`에서 `enabled` 제외), `packages/domino_ingest/story.py`(`detect_wire`의 `text[:300]` 비교 대상 = 본문이 제목(공백 정규화 후)으로 시작하면 그 접두를 뺀 앞 300자, byline 정규식도 같은 대상), `tests/unit/{test_sources.py, test_story.py, test_simhash.py}`, `tests/integration/test_sources_upsert.py`
   - 완료 기준 (테스트 먼저):
@@ -71,7 +71,7 @@
   - 추정: M (2h) · 모델: sonnet
   - 선행: 없음 (T2·T3과 파일이 겹치지 않음 — worktree 병행 가능)
 
-- [ ] T6 — domino_core — `asof_for` 경량 경로(⑥), DSN을 `SecretStr`로(⑦), `Settings.tz` 삭제(⑧), `hide_parameters`(L4)
+- [x] T6 (df536ce, merge 3a4097c) — domino_core — `asof_for` 경량 경로(⑥), DSN을 `SecretStr`로(⑦), `Settings.tz` 삭제(⑧), `hide_parameters`(L4)
   - 명세: code-phase0.md §0.3 · tech-phase0.md §2.2 · decisions ⑥·⑦·⑧ · review L4·L5·L10
   - 산출물: `packages/domino_core/{settings.py, timeutil.py, clients/db.py, clients/redis.py}`(`pg_dsn`·`redis_url: SecretStr`, 호출부 `get_secret_value()`; `tz` 필드 삭제; `asof_for`는 `REPORT_HOUR_KST` 하나만 읽는 경량 설정 경로; `create_engine(..., hide_parameters=True)`), `migrations/env.py`(DSN 읽기), `.env.example`(`TZ=` 줄 삭제), `tests/unit/{test_settings.py, test_timeutil.py, test_clients.py}`, 필요한 테스트 fixture
   - 완료 기준 (테스트 먼저):
@@ -114,7 +114,7 @@
   - 추정: S (1.5h) · 모델: sonnet
   - 선행: 없음
 
-- [ ] T10 — domino_extract — grounding (NFKC·공백 정규화, 역매핑, rapidfuzz 재탐색)
+- [x] T10 (fdd45f2, merge f9a3a36) — domino_extract — grounding (NFKC·공백 정규화, 역매핑, rapidfuzz 재탐색)
   - 명세: code-phase0.md §2.4, §7.7 `test_grounding.py` · tech-phase0.md §5.1 extract.validate (1)
   - 산출물: `packages/domino_extract/grounding.py`(`norm`, `ground`), `tests/unit/test_grounding.py`, `pyproject.toml`(`rapidfuzz` 고정)
   - 완료 기준 (테스트 먼저): `test_grounding.py` — 정확 일치, 공백 중복, NFKC 전각, 따옴표 변형, BOM, 부분 일치 95(경계 94·95), 실패 → None, 모든 성공 케이스에서 `text[s:e]`가 원문 좌표의 해당 구간(역매핑), 한국어 1건. `make test` 초록
