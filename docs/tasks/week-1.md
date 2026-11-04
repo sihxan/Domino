@@ -54,7 +54,7 @@
   - 추정: S (1h) · 모델: sonnet
   - 선행: T2
 
-- [ ] T7 — domino_ingest — 소스 레지스트리·로더·`make seed`
+- [x] T7 (c95b9cc) — domino_ingest — 소스 레지스트리·로더·`make seed`
   - 명세: code-phase0.md §1.1, §0.6 `SourceSpec` · tech-phase0.md §3.1 `sources`, §8.2 Week 1 · decisions 2026-11-04 [ingest] source id, week-1 소스 범위
   - 산출물: `sources/{us,kr,jp,tw,de}.yaml`(국가당 3, `kind ∈ {rss, html}`만), `sources/wires.yaml`, `packages/domino_ingest/sources.py`(`load_sources(dir) -> list[SourceSpec]`, `upsert_sources`), `Makefile`의 `seed`(이번 주는 sources만), `tests/unit/test_sources.py`, `tests/integration/test_sources_upsert.py`
   - 완료 기준: `test_sources.py` — 저장소의 YAML 15개 전부 검증 통과, id 중복 거부, `parser`가 등록된 크롤러 이름이 아니면 거부, wires 정규식 컴파일; `test_sources_upsert.py` — 2회 upsert 후 행 15개·값 갱신; 각 URL을 로더 작성 시 1회 수동 확인(응답 200·robots 허용)하고 결과를 PR/커밋 본문에 표로
