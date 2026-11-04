@@ -55,7 +55,34 @@ def test_built_from_env(env: None) -> None:
     assert s.redis_url.get_secret_value() == REQUIRED_ENV["REDIS_URL"]
     assert s.neo4j_uri == REQUIRED_ENV["NEO4J_URI"]
     assert s.from_email == REQUIRED_ENV["FROM_EMAIL"]
+    assert s.anthropic_api_key is not None
     assert s.anthropic_api_key.get_secret_value() == "anthropic-secret-value"
+
+
+def test_llm_backend_defaults_to_subscription_and_keys_are_optional(
+    env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    s = make()
+    assert s.llm_backend == "claude_code"
+    assert s.anthropic_api_key is None
+    assert s.claude_code_oauth_token is None
+
+
+def test_llm_backend_from_env_and_oauth_token_is_secret(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("LLM_BACKEND", "api")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-secret-value")
+    s = make()
+    assert s.llm_backend == "api"
+    assert isinstance(s.claude_code_oauth_token, SecretStr)
+    assert "oauth-secret-value" not in repr(s)
+    monkeypatch.setenv("LLM_BACKEND", "other")
+    with pytest.raises(ValidationError):
+        make()
 
 
 def test_env_overrides_default(env: None, monkeypatch: pytest.MonkeyPatch) -> None:

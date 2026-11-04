@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     langfuse_public_key: str
     langfuse_secret_key: SecretStr
     # llm
-    anthropic_api_key: SecretStr
+    llm_backend: Literal["claude_code", "api"] = "claude_code"  # subscription (Claude Code headless) first, api later
+    claude_code_oauth_token: SecretStr | None = None  # `claude setup-token` value for containers (claude_code backend)
+    anthropic_api_key: SecretStr | None = None  # required only by the api backend
     model_extract: str = "claude-haiku-5-5"
     model_judge: str = "claude-sonnet-5-5"
     model_lead: str = "claude-sonnet-5-5"
