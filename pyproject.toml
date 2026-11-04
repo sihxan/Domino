@@ -1,0 +1,98 @@
+[project]
+name = "domino"
+version = "0.0.0"
+description = "Domino Phase 0 — daily insight report pipeline"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "packages/domino_core",
+    "packages/domino_ingest",
+    "packages/domino_extract",
+    "packages/domino_resolve",
+    "packages/domino_graph",
+    "packages/domino_signals",
+    "packages/domino_agent",
+    "packages/domino_report",
+    "packages/domino_eval",
+]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "domino_core",
+    "domino_ingest",
+    "domino_extract",
+    "domino_resolve",
+    "domino_graph",
+    "domino_signals",
+    "domino_agent",
+    "domino_report",
+    "domino_eval",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "packages"
+explicit_package_bases = true
+files = ["packages", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
+addopts = "--import-mode=importlib -ra"
+markers = [
+    "integration: needs testcontainers (Docker)",
+    "golden: real LLM calls, cost incurred",
+]
+
+[tool.importlinter]
+root_packages = [
+    "domino_core",
+    "domino_ingest",
+    "domino_extract",
+    "domino_resolve",
+    "domino_graph",
+    "domino_signals",
+    "domino_agent",
+    "domino_report",
+    "domino_eval",
+]
+
+[[tool.importlinter.contracts]]
+name = "Dependency direction: core <- ingest <- extract <- resolve <- graph <- signals <- agent <- report <- eval"
+type = "layers"
+layers = [
+    "domino_eval",
+    "domino_report",
+    "domino_agent",
+    "domino_signals",
+    "domino_graph",
+    "domino_resolve",
+    "domino_extract",
+    "domino_ingest",
+    "domino_core",
+]
