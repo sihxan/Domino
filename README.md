@@ -8,10 +8,24 @@
 
 ## 현재 상태
 
-| 주차 | 목표("주말 기준 상태") | 상태 |
-| --- | --- | --- |
-| Week 1 | `make up` 후 문서가 Postgres에 쌓인다 | 완료 — 리뷰 [docs/review/week-1.md](docs/review/week-1.md) |
-| Week 2 | 수집이 스케줄로 돌고, 트리플이 `extraction_runs`에 쌓인다 | 진행 중 — [docs/tasks/week-2.md](docs/tasks/week-2.md) |
+12주 구현 순서는 [tech-phase0.md §8.2](docs/spec/tech-phase0.md)를 따릅니다. 주마다 "주말 기준 상태"를 채우지 못하면 다음 주로 넘어가지 않고 그 주 범위를 줄입니다. 순서는 바꾸지 않습니다.
+
+| 주차 | 할 일 | 주말 기준 상태 | 상태 |
+| --- | --- | --- | --- |
+| Week 1 | 레포·compose·설정·마이그레이션 0001·Neo4j DDL·CI, 5개국 15소스, RSS·HTML 크롤러, normalizer, SimHash, chunker | `make up` 후 문서가 Postgres에 쌓인다 | ✅ 완료 — [작업](docs/tasks/week-1.md) · [리뷰](docs/review/week-1.md) |
+| Week 2 | 수집 스케줄, 추출 스키마·프롬프트·grounding·validator·hedge 사전, Langfuse 연결, gold 30건 첫 측정 | 수집이 스케줄로 돌고, 트리플이 `extraction_runs`에 쌓인다 | 🔄 진행 중 — [작업](docs/tasks/week-2.md) |
+| Week 3 | embedder, Resolver 3단계·judge, 검토 큐 테이블·API, `GraphRepo` Q1~Q3, 승격 | Neo4j에 Entity·CAUSES·Evidence·Story가 생긴다 | 계획 |
+| Week 4 | 소스 15개국 45개, GDELT 발견, EDGAR·DART·FRED·EIA 파서, 통신사 전재, Storyline 시드 20 + Linker, gold 100 | A급 출처 일일 커버 측정 시작 | 계획 |
+| Week 5 | Trend 2신호, rescore, Q4~Q6, PPR 캐시, 그래프 도구 7종, `trend.board` | 도구를 CLI로 호출해 답이 나온다 | 계획 |
+| Week 6 | Agent SDK runner, lead + Scout·Tracer·Verifier, master claim graph 스키마 검증, 첫 dry-run | `claim_graph`가 저장된다(품질 무관) | 계획 |
+| Week 7 | Thesis 10개(signpost 포함)·로더, `thesis.list`·signpost 판정, 예측 장부·Brier, `/record` 골격 | 예측 30건이 사전 등록된다 | 계획 |
+| Week 8 | 페르소나·slice·editorial·렌더 템플릿·게이트·이메일 발송, Report view(web), 자기검증 꼬리, gold 300 | dry-run이 게이트를 통과하는 날이 생긴다 | 계획 |
+| Week 9 | 흐름 빠른 축(PortWatch·FRED·접속 큐·가격·예측 시장) series 100 + naive nowcast, `flows.board`, 커버리지·예정·후속 도구 | 리포트에 흐름 한 줄·다루지 않은 지역·예정표가 들어간다 | 계획 |
+| Week 10 | LLM 베이스라인 질문·겹침 측정, `/ops` 뷰, health flow, 백업, 런북, 매일 06:00 dry-run 시작 | 연속 발행 카운트 시작 | 계획 |
+| Week 11 | 품질 반복(lead·Verifier 프롬프트, 게이트 실패 원인 제거, 비용 조정), 리포트 회귀 5건 고정 | 7일 연속 게이트 통과 | 계획 |
+| Week 12 | 베타 10명 등록·발송·webhook, 보류 경로 리허설, 성공 기준 점검 | **비공개 베타 발행 시작** | 계획 |
+
+Phase 0 성공 기준(Week 12): 14일 연속 06:00 발행(보류 ≤ 2일), 각주 커버리지 100%·금지어 0건·grounding 성공률 ≥ 95%, 15개국 A급 소스 일일 커버 ≥ 80%, Thesis 10개 + signpost 공개, 예측 장부 사전 등록 ≥ 30건, LLM 베이스라인 겹침률 첫 측정, 베타 10명 주간 열람률 측정 시작. 자세한 내용은 [tech-phase0.md §0.3](docs/spec/tech-phase0.md).
 
 지금 동작하는 것은 수집 단계입니다. 5개국(미국·한국·일본·대만·독일) 공공기관 RSS 15개를 수집하고, 본문 추출·중복 판정(SimHash)·chunk 분할을 거쳐 Postgres에 저장합니다. 추출(LLM)·그래프·리포트는 이후 주차에 만듭니다.
 
