@@ -18,6 +18,7 @@ from domino_ingest.normalizer import SkippedDocError, doc_type_for, url_hash
 from domino_ingest.simhash import to_signed, to_unsigned
 from domino_ingest.story import STORY_WINDOW, StoryHead
 
+CADENCE_TOLERANCE = timedelta(minutes=1)  # a source is due once `now - last_ok_at >= cadence_min - 1 minute`
 MAX_FAILS = 5  # consecutive failed crawls before a source is disabled (tech §5 ingest.fetch)
 
 log = get_logger(__name__)
@@ -46,16 +47,20 @@ _DUE = text(
     SELECT id, country, region, belts, publisher, grade::text AS grade, state_controlled, wire, kind, url,
            cadence_min, parser, lang, enabled, last_ok_at, fail_count
     FROM sources
-    WHERE enabled AND (last_ok_at IS NULL OR last_ok_at + make_interval(mins => cadence_min) <= :now)
+    WHERE enabled AND (last_ok_at IS NULL OR last_ok_at + make_interval(mins => cadence_min) <= :due_by)
     ORDER BY id
     """
 )
 
 
 def due_sources(now: datetime | None = None, *, conn: Connection | None = None) -> list[tuple[SourceSpec, SourceState]]:
-    """Enabled sources whose cadence has elapsed since `last_ok_at` (or never succeeded), with their state."""
+    """Enabled sources whose cadence has elapsed since `last_ok_at` (or never succeeded), with their state.
+
+    `CADENCE_TOLERANCE` absorbs the seconds between a cron tick and the `now` recorded in `last_ok_at`; without it a
+    30-minute source would only run every second tick (45 minutes).
+    """
     with _conn(conn) as c:
-        found = c.execute(_DUE, {"now": now or now_utc()}).mappings().all()
+        found = c.execute(_DUE, {"due_by": (now or now_utc()) + CADENCE_TOLERANCE}).mappings().all()
     due: list[tuple[SourceSpec, SourceState]] = []
     for row in found:
         spec = SourceSpec.model_validate({k: row[k] for k in SourceSpec.model_fields})

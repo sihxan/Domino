@@ -8,7 +8,7 @@ from pathlib import Path
 from prefect import flow
 
 from domino_core.clients.db import connection
-from domino_core.errors import DominoError, PermanentError
+from domino_core.errors import DominoError, PermanentError, TransientError
 from domino_core.ids import new_id
 from domino_core.log import bind_context, get_logger
 from domino_core.models import RawDoc, SourceSpec
@@ -16,7 +16,7 @@ from domino_core.settings import get_settings
 from domino_core.timeutil import now_utc
 from domino_ingest import store
 from domino_ingest.chunker import chunk
-from domino_ingest.crawlers import CRAWLERS
+from domino_ingest.crawlers import CRAWLERS, base
 from domino_ingest.crawlers.base import skip_known
 from domino_ingest.normalizer import SkippedDocError, normalize, url_hash
 from domino_ingest.sources import WIRES_FILE, load_wires
@@ -26,6 +26,9 @@ from domino_ingest.story import STORY_WINDOW, WireRules, assign_story, detect_wi
 ROOT = Path(__file__).resolve().parents[1]
 FIRST_LOOKBACK = timedelta(hours=24)  # `since` for a source that has never succeeded
 
+FETCH_ATTEMPTS = 3  # crawl attempts per source and run on TransientError (tech §5 ingest.fetch)
+FETCH_BACKOFF_S = 2.0  # wait 2 s, then 4 s, between attempts
+
 log = get_logger("flows.ingest")
 
 
@@ -34,6 +37,23 @@ def _known_urls(urls: list[str]) -> set[str]:
     hashes = {u: url_hash(u) for u in urls}
     known = store.known_url_hashes(hashes.values())
     return {u for u, h in hashes.items() if h in known}
+
+
+def _crawl(spec: SourceSpec, since: datetime) -> list[RawDoc]:
+    """One source's crawl, retried on TransientError with exponential backoff; PermanentError is never retried."""
+    if spec.parser not in CRAWLERS:
+        raise PermanentError(f"unknown crawler {spec.parser!r}")
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            with skip_known(_known_urls):
+                return CRAWLERS[spec.parser]().fetch(spec, since=since)
+        except TransientError as e:
+            if attempt == FETCH_ATTEMPTS:
+                raise
+            delay = FETCH_BACKOFF_S * 2 ** (attempt - 1)
+            log.warning("fetch_retry", attempt=attempt, wait_s=delay, error=str(e))
+            base.CLOCK.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _ingest_document(raw: RawDoc, spec: SourceSpec, now: datetime, wires: WireRules) -> str:
@@ -59,10 +79,7 @@ def _ingest_document(raw: RawDoc, spec: SourceSpec, now: datetime, wires: WireRu
 
 def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: WireRules) -> None:
     try:
-        if spec.parser not in CRAWLERS:
-            raise PermanentError(f"unknown crawler {spec.parser!r}")
-        with skip_known(_known_urls):
-            raws = CRAWLERS[spec.parser]().fetch(spec, since=state.last_ok_at or now - FIRST_LOOKBACK)
+        raws = _crawl(spec, state.last_ok_at or now - FIRST_LOOKBACK)
     except DominoError as e:  # Transient and Permanent alike: only this source is skipped
         fail_count = store.mark_fail(spec, f"{type(e).__name__}: {e}")
         log.warning("source_failed", error=str(e), fail_count=fail_count)

@@ -88,15 +88,20 @@ def raw(url: str, html: str, source_id: str = "src_t_a", published_at: datetime 
     return RawDoc(url=url, title=None, published_at=published_at, html=html, fetched_at=T0, source_id=source_id)
 
 
+SLEEPS: list[float] = []
+
+
 class FakeCrawler:
     """`plan[source_id]` is what `fetch` returns (or raises); `since_seen` records the `since` each call got."""
 
     plan: ClassVar[dict[str, list[RawDoc] | Exception]] = {}
+    script: ClassVar[dict[str, list[list[RawDoc] | Exception]]] = {}  # per-call outcomes, used before `plan`
     since_seen: ClassVar[list[tuple[str, datetime]]] = []
 
     def fetch(self, spec: SourceSpec, since: datetime) -> list[RawDoc]:
         FakeCrawler.since_seen.append((spec.id, since))
-        result = FakeCrawler.plan[spec.id]
+        scripted = FakeCrawler.script.get(spec.id)
+        result = scripted.pop(0) if scripted else FakeCrawler.plan[spec.id]
         if isinstance(result, Exception):
             raise result
         return result
@@ -195,8 +200,11 @@ def engine(migrated: Engine, monkeypatch: pytest.MonkeyPatch) -> Engine:
     with migrated.begin() as conn:
         conn.execute(text("TRUNCATE chunks, raw_documents, stories, sources CASCADE"))
     FakeCrawler.plan = {}
+    FakeCrawler.script = {}
     FakeCrawler.since_seen = []
     monkeypatch.setitem(CRAWLERS, "FakeCrawler", FakeCrawler)
+    SLEEPS.clear()  # retry backoff must not really wait
+    monkeypatch.setattr(base, "CLOCK", Clock(monotonic=lambda: 0.0, sleep=SLEEPS.append))
     return migrated
 
 
@@ -295,6 +303,35 @@ def test_since_is_last_ok_at_or_24h_before_now(engine: Engine) -> None:
     run(T0)
     run(T0 + timedelta(minutes=20))
     assert FakeCrawler.since_seen == [("src_t_a", T0 - timedelta(hours=24)), ("src_t_a", T0)]
+
+
+def test_transient_error_is_retried_with_backoff_and_a_later_success_is_not_a_failure(engine: Engine) -> None:
+    seed(engine, spec("src_t_a"))
+    doc = raw("https://a.example.org/rates", page(BODY_RATES))
+    FakeCrawler.script = {"src_t_a": [TransientError("http 503"), TransientError("http 503"), [doc]]}
+    run(T0)
+    assert len(FakeCrawler.since_seen) == 3
+    assert SLEEPS == [2.0, 4.0]
+    assert rows(engine, "SELECT fail_count, last_error, last_ok_at FROM sources") == [(0, None, T0)]
+    assert rows(engine, "SELECT status FROM raw_documents") == [("chunked",)]
+
+
+def test_three_transient_failures_count_as_one_failure(engine: Engine) -> None:
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.plan = {"src_t_a": TransientError("http 503")}
+    run(T0)
+    assert len(FakeCrawler.since_seen) == 3
+    assert SLEEPS == [2.0, 4.0]  # no wait after the last attempt
+    assert rows(engine, "SELECT fail_count, enabled, last_ok_at FROM sources") == [(1, True, None)]
+
+
+def test_permanent_error_is_not_retried(engine: Engine) -> None:
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.plan = {"src_t_a": PermanentError("feed unparsable")}
+    run(T0)
+    assert len(FakeCrawler.since_seen) == 1
+    assert SLEEPS == []
+    assert scalar(engine, "SELECT fail_count FROM sources") == 1
 
 
 def test_source_not_yet_due_is_not_crawled(engine: Engine) -> None:
@@ -562,6 +599,18 @@ def test_due_sources_returns_state_and_skips_disabled_and_not_due(engine: Engine
         ("src_t_d", None, 0),
     ]
     assert due[0][0] == spec("src_t_a", cadence_min=15)
+
+
+def test_due_sources_tolerates_one_minute_of_cadence_drift(engine: Engine) -> None:
+    seed(engine, spec("src_t_a", cadence_min=30))
+    for ago, is_due in (
+        (timedelta(minutes=29, seconds=30), True),
+        (timedelta(minutes=29), True),
+        (timedelta(minutes=28), False),
+    ):
+        with connection(engine=engine) as conn:
+            conn.execute(text("UPDATE sources SET last_ok_at = :t"), {"t": T0 - ago})
+        assert [s.id for s, _ in store.due_sources(T0)] == (["src_t_a"] if is_due else []), ago
 
 
 def test_insert_skipped_uses_the_snapshot_the_error_carries(engine: Engine) -> None:
