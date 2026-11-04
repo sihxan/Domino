@@ -58,6 +58,11 @@ def call(
 
 비용은 모델별 단가표(`pricing.yaml`, 설정)로 계산해 Redis `INCRBYFLOAT budget_key`. `cost_usd`는 `extraction_runs`·`report_runs`에 기록.
 
+**백엔드 (2026-11-04 사용자 결정):** `call`의 시그니처·반환·예외 계약은 그대로 두고, 실제 호출 경로를 `settings.llm_backend`로 고른다.
+- `claude_code`(기본, Phase 0 초기): Claude 구독으로 인증한 Claude Code 헤드리스 경로(claude-agent-sdk 또는 `claude -p`) — 별도 API 과금 없음. 도구 없이 1턴, 시스템 프롬프트는 `system`, 출력은 JSON으로 받아 **클라이언트에서 Pydantic 검증**(스키마 불일치 → `PermanentError`). 구독 사용 한도 도달 → `TransientError` 하위의 한도 오류(호출자는 그 run의 LLM 단계를 멈추고 다음 스케줄에 이어 한다).
+- `api`: Anthropic SDK + `anthropic_api_key` — 가능성이 확인되면 전환. structured output·prompt caching·정확한 비용.
+- `cost_usd`·예산 카운터는 두 백엔드 모두 토큰 사용량 × `pricing.yaml`로 계산한 **API 환산 비용**을 쓴다(구독에서는 실제 청구액이 아니라 API 전환 시 비용 추정치이자 사용량 상한). 토큰 사용량을 못 받으면 `0`과 함께 로그 경고.
+
 ### 0.5 `domino_core.clients.embed`
 
 ```python

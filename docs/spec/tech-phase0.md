@@ -141,7 +141,9 @@ class Settings(BaseSettings):
     embedder_url: str = "http://embedder:8080"
     langfuse_host: str; langfuse_public_key: str; langfuse_secret_key: SecretStr
     # llm
-    anthropic_api_key: SecretStr
+    llm_backend: Literal["claude_code", "api"] = "claude_code"   # 구독(Claude Code 헤드리스) 우선, 가능성 확인 후 api
+    claude_code_oauth_token: SecretStr | None = None   # 구독 인증 토큰(컨테이너용), claude_code 백엔드
+    anthropic_api_key: SecretStr | None = None         # api 백엔드에서만 필수
     model_extract: str = "claude-haiku-5-5"
     model_judge: str = "claude-sonnet-5-5"
     model_lead: str = "claude-sonnet-5-5"
