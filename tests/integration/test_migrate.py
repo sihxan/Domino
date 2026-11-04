@@ -134,6 +134,32 @@ def test_downgrade_base_then_upgrade_head(alembic_cfg: Config, pg_url: str) -> N
     assert public_tables(pg_url) == spec_tables() | {"alembic_version"}
 
 
+def skip_reason_columns(url: str) -> list[tuple[str, str, str]]:
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+                    "WHERE table_name = 'raw_documents' AND column_name = 'skip_reason'"
+                )
+            )
+            return [(r[0], r[1], r[2]) for r in rows]
+    finally:
+        engine.dispose()
+
+
+def test_0002_adds_nullable_skip_reason(alembic_cfg: Config, pg_url: str) -> None:
+    command.upgrade(alembic_cfg, "head")
+    assert skip_reason_columns(pg_url) == [("skip_reason", "text", "YES")]
+    command.downgrade(alembic_cfg, "0001")
+    assert skip_reason_columns(pg_url) == []
+    assert public_tables(pg_url) == spec_tables() | {"alembic_version"}  # 0001 itself is untouched
+    command.upgrade(alembic_cfg, "head")
+    assert skip_reason_columns(pg_url) == [("skip_reason", "text", "YES")]
+    command.upgrade(alembic_cfg, "head")  # a second run is a no-op
+
+
 def test_neo4j_ddl_is_idempotent(neo4j_settings: Settings) -> None:
     apply_ddl(settings=neo4j_settings)
     apply_ddl(settings=neo4j_settings)

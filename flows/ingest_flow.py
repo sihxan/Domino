@@ -66,12 +66,14 @@ def _ingest_document(raw: RawDoc, spec: SourceSpec, now: datetime, wires: WireRu
     # One transaction per document: a crash can never leave a stored document without its story and chunks.
     with connection() as conn:
         heads = store.recent_story_heads(STORY_WINDOW, now=now, conn=conn)
-        doc.story_id = assign_story(doc, heads, get_settings().simhash_threshold, now=now)
-        doc.wire_origin = detect_wire(doc, store.story_docs(doc.story_id, conn=conn), wires)
+        settings = get_settings()
+        doc.story_id = assign_story(doc, heads, settings.simhash_threshold, now=now)
+        # a wire agency's own documents carry its wires.yaml key, so original and reprints aggregate under one key (H3)
+        doc.wire_origin = spec.wire or detect_wire(doc, store.story_docs(doc.story_id, conn=conn), wires)
         if not store.insert_document(doc, conn=conn):
             return "duplicate"
         store.upsert_story(doc, now=now, conn=conn)
-        for c in chunk(doc):
+        for c in chunk(doc, max_tokens=settings.chunk_tokens, overlap=settings.chunk_overlap):
             store.insert_chunk(c, conn=conn)
         store.set_status(doc.id, "chunked", conn=conn)
     return "chunked"
@@ -80,23 +82,32 @@ def _ingest_document(raw: RawDoc, spec: SourceSpec, now: datetime, wires: WireRu
 def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: WireRules) -> None:
     try:
         raws = _crawl(spec, state.last_ok_at or now - FIRST_LOOKBACK)
-    except DominoError as e:  # Transient and Permanent alike: only this source is skipped
+    except Exception as e:  # Domino errors and library exceptions alike: only this source is skipped (L3)
+        if not isinstance(e, DominoError):
+            log.exception("source_crashed", error=str(e))
         fail_count = store.mark_fail(spec, f"{type(e).__name__}: {e}")
         log.warning("source_failed", error=str(e), fail_count=fail_count)
         return
     counts = {"chunked": 0, "skipped": 0, "duplicate": 0, "failed": 0, "known": 0}
+    failed: list[RawDoc] = []
     for raw in raws:
         if store.exists(url_hash(raw.url)):  # idempotent: the same url_hash is never stored twice
             counts["known"] += 1
             continue
         try:
             counts[_ingest_document(raw, spec, now, wires)] += 1
-        except PermanentError as e:  # this document only (e.g. an invalid page); the snapshot, if any, stays
+        except TransientError:  # storage outage: not this document's fault, `last_ok_at` stays where it was
+            raise
+        except Exception as e:  # PermanentError or a library exception: this document only; its snapshot, if any, stays
             counts["failed"] += 1
-            log.warning("document_failed", url=raw.url, error=str(e))
-    # `last_ok_at` is the run's start: the next `since` overlaps the crawl instead of leaving a gap.
-    store.mark_ok(spec, at=now)
-    log.info("source_ok", n_fetched=len(raws), **counts)
+            failed.append(raw)
+            log.warning("document_failed", url=raw.url, error_type=type(e).__name__, error=str(e))
+    # `last_ok_at` is the run's start, so the next `since` overlaps the crawl instead of leaving a gap. A failed
+    # document holds it back to its own publication date, so the next run fetches that entry again. (`fail_count`
+    # counts source failures only.)
+    mark_at = min([r.published_at for r in failed if r.published_at is not None] + [now])
+    store.mark_ok(spec, at=mark_at)
+    log.info("source_ok", n_fetched=len(raws), last_ok_at=mark_at.isoformat(), **counts)
 
 
 @flow(name="ingest", timeout_seconds=600)

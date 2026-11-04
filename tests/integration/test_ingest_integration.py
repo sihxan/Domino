@@ -22,11 +22,11 @@ from domino_core.clients import s3 as s3_client
 from domino_core.clients.db import connection
 from domino_core.errors import PermanentError, TransientError
 from domino_core.models import Chunk, Document, RawDoc, SourceSpec
-from domino_core.settings import Settings
+from domino_core.settings import Settings, get_settings
 from domino_ingest import store
 from domino_ingest.crawlers import CRAWLERS, base
 from domino_ingest.crawlers.base import Clock
-from domino_ingest.normalizer import TooShortError, url_hash
+from domino_ingest.normalizer import LangUndetectedError, TooShortError, url_hash
 from domino_ingest.simhash import to_signed
 from domino_ingest.sources import upsert_sources
 from flows.ingest_flow import ingest_flow
@@ -97,6 +97,7 @@ class FakeCrawler:
     plan: ClassVar[dict[str, list[RawDoc] | Exception]] = {}
     script: ClassVar[dict[str, list[list[RawDoc] | Exception]]] = {}  # per-call outcomes, used before `plan`
     since_seen: ClassVar[list[tuple[str, datetime]]] = []
+    respect_since: ClassVar[bool] = False  # True: drop dated documents older than `since`, like RssCrawler does
 
     def fetch(self, spec: SourceSpec, since: datetime) -> list[RawDoc]:
         FakeCrawler.since_seen.append((spec.id, since))
@@ -104,6 +105,8 @@ class FakeCrawler:
         result = scripted.pop(0) if scripted else FakeCrawler.plan[spec.id]
         if isinstance(result, Exception):
             raise result
+        if FakeCrawler.respect_since:
+            return [r for r in result if r.published_at is None or r.published_at >= since]
         return result
 
 
@@ -202,6 +205,7 @@ def engine(migrated: Engine, monkeypatch: pytest.MonkeyPatch) -> Engine:
     FakeCrawler.plan = {}
     FakeCrawler.script = {}
     FakeCrawler.since_seen = []
+    FakeCrawler.respect_since = False
     monkeypatch.setitem(CRAWLERS, "FakeCrawler", FakeCrawler)
     SLEEPS.clear()  # retry backoff must not really wait
     monkeypatch.setattr(base, "CLOCK", Clock(monotonic=lambda: 0.0, sleep=SLEEPS.append))
@@ -427,12 +431,136 @@ def test_one_sources_permanent_error_does_not_block_the_others(engine: Engine) -
 
 def test_unexpected_normalize_error_skips_only_that_document(engine: Engine) -> None:
     seed(engine, spec("src_t_a"))
-    naive = raw("https://a.example.org/naive", page(BODY_RATES))
+    failed_at = T0 - timedelta(hours=2)
+    naive = raw("https://a.example.org/naive", page(BODY_RATES), published_at=failed_at)
     naive = naive.model_copy(update={"fetched_at": datetime(2026, 11, 4)})  # naive datetime → PermanentError
     FakeCrawler.plan = {"src_t_a": [naive, raw("https://a.example.org/trade", page(BODY_TRADE))]}
     run(T0)
     assert rows(engine, "SELECT url, status FROM raw_documents") == [("https://a.example.org/trade", "chunked")]
-    assert scalar(engine, "SELECT fail_count FROM sources") == 0  # the source itself was fine
+    # the source itself was fine, but `last_ok_at` stops at the failed document so the next run fetches it again (H1)
+    assert rows(engine, "SELECT fail_count, last_ok_at FROM sources") == [(0, failed_at)]
+
+
+def test_document_failure_holds_last_ok_at(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H1: a storage failure (S3 403) must not move `last_ok_at` past the document, or it is lost for good."""
+    seed(engine, spec("src_t_a"))
+    published = T0 - timedelta(minutes=10)
+    FakeCrawler.respect_since = True
+    FakeCrawler.plan = {"src_t_a": [raw("https://a.example.org/rates", page(BODY_RATES), published_at=published)]}
+
+    with monkeypatch.context() as m:
+        m.setattr("domino_ingest.normalizer.put_immutable", _raise_permanent)
+        run(T0)
+    assert rows(engine, "SELECT last_ok_at, fail_count FROM sources") == [(published, 0)]
+    assert counts(engine) == (0, 0, 0)
+
+    run(T0 + timedelta(minutes=15))  # S3 is back: `since` is the failed entry's date, so the crawler returns it again
+    assert FakeCrawler.since_seen[-1] == ("src_t_a", published)
+    assert rows(engine, "SELECT url, status FROM raw_documents") == [("https://a.example.org/rates", "chunked")]
+    assert rows(engine, "SELECT last_ok_at, fail_count FROM sources") == [(T0 + timedelta(minutes=15), 0)]
+
+
+def _raise_permanent(*_a: Any, **_k: Any) -> bool:
+    raise PermanentError("s3 403")
+
+
+def test_undated_document_failure_does_not_hold_last_ok_at_back(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed document without `published_at` cannot hold `last_ok_at` back (undated entries are re-fetched)."""
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.plan = {"src_t_a": [raw("https://a.example.org/undated", page(BODY_RATES), published_at=None)]}
+    monkeypatch.setattr("domino_ingest.normalizer.put_immutable", _raise_permanent)
+    run(T0)
+    assert rows(engine, "SELECT last_ok_at, fail_count FROM sources") == [(T0, 0)]
+
+
+def test_unexpected_exception_marks_source_failed(engine: Engine) -> None:
+    """Review L3: a library exception (not a DominoError) fails only that source."""
+    seed(engine, spec("src_t_a"), spec("src_t_b"))
+    FakeCrawler.plan = {
+        "src_t_a": OverflowError("timestamp out of range"),
+        "src_t_b": [raw("https://b.example.org/power", page(BODY_POWER), "src_t_b")],
+    }
+    run(T0)
+    (a_fail, a_error, a_ok), (b_fail, b_error, b_ok) = rows(
+        engine, "SELECT fail_count, last_error, last_ok_at FROM sources ORDER BY id"
+    )
+    assert a_fail == 1 and a_error.startswith("OverflowError") and a_ok is None
+    assert (b_fail, b_error, b_ok) == (0, None, T0)
+    assert rows(engine, "SELECT source_id, status FROM raw_documents") == [("src_t_b", "chunked")]
+    assert len(FakeCrawler.since_seen) == 2  # not retried, and the second source still ran
+
+
+def test_unexpected_exception_while_storing_fails_only_that_document(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-DominoError inside the document loop is a failed document (decision W2-15), not a dead flow."""
+    seed(engine, spec("src_t_a"))
+    published = T0 - timedelta(minutes=5)
+    FakeCrawler.plan = {
+        "src_t_a": [
+            raw("https://a.example.org/rates", page(BODY_RATES), published_at=published),
+            raw("https://a.example.org/trade", page(BODY_TRADE)),
+        ]
+    }
+    real = store.insert_chunk
+    calls = {"n": 0}
+
+    def flaky(chunk: Chunk, **kw: Any) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ValueError("boom")
+        return real(chunk, **kw)
+
+    monkeypatch.setattr(store, "insert_chunk", flaky)
+    run(T0)
+    assert rows(engine, "SELECT url, status FROM raw_documents") == [("https://a.example.org/trade", "chunked")]
+    assert rows(engine, "SELECT last_ok_at, fail_count FROM sources") == [(published, 0)]
+
+
+def test_chunk_uses_settings(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review L1: CHUNK_TOKENS reaches the chunker."""
+    seed(engine, spec("src_t_a"))
+    body = "".join(f"<p>{b}</p>" for b in (BODY_RATES, BODY_TRADE, BODY_POWER))
+    html = f"<html><head><title>T</title></head><body><article><h1>Headline</h1>{body}</article></body></html>"
+    FakeCrawler.plan = {"src_t_a": [raw("https://a.example.org/long", html)]}
+
+    monkeypatch.setenv("CHUNK_TOKENS", "128")
+    get_settings.cache_clear()
+    run(T0)
+
+    sizes = [r[0] for r in rows(engine, "SELECT n_tokens FROM chunks")]
+    assert len(sizes) >= 2  # the default 512 would keep this document in one chunk
+    assert max(sizes) <= 128
+
+
+def test_wire_source_sets_wire_origin(engine: Engine) -> None:
+    """Review H3: a wire source's own documents carry `sources.wire`, so original and reprint count one publisher."""
+    seed(engine, spec("src_t_a", wire="reuters", publisher="Reuters"), spec("src_t_b"))
+    FakeCrawler.plan = {
+        "src_t_a": [raw("https://a.example.org/rates", page(BODY_RATES, title="Rates unchanged"))],  # no byline
+        "src_t_b": [raw("https://b.example.org/copy", page(BODY_RATES, title="Rates unchanged"), "src_t_b")],
+    }
+    run(T0)
+    origins = dict(rows(engine, "SELECT source_id, wire_origin FROM raw_documents"))
+    assert origins == {"src_t_a": "reuters", "src_t_b": "reuters"}
+    assert rows(engine, "SELECT n_docs, n_publishers FROM stories") == [(2, 1)]
+
+
+def test_skipped_has_reason(engine: Engine) -> None:
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.plan = {
+        "src_t_a": [
+            raw("https://a.example.org/stub", page("Short.")),
+            raw("https://a.example.org/rates", page(BODY_RATES)),
+        ]
+    }
+    run(T0)
+    assert rows(engine, "SELECT url, status, skip_reason FROM raw_documents ORDER BY url") == [
+        ("https://a.example.org/rates", "chunked", None),
+        ("https://a.example.org/stub", "skipped", "too_short"),
+    ]
 
 
 def test_reprint_in_the_same_story_counts_one_publisher(engine: Engine) -> None:
@@ -622,3 +750,13 @@ def test_insert_skipped_uses_the_snapshot_the_error_carries(engine: Engine) -> N
     ]
     store.insert_skipped(r, TooShortError("doc_other", "raw/2026/11/doc_other.html", "3" * 64), spec("src_t_a"))
     assert scalar(engine, "SELECT count(*) FROM raw_documents") == 1  # same url_hash: no second row
+
+
+def test_insert_skipped_records_the_reason(engine: Engine) -> None:
+    seed(engine, spec("src_t_a"))
+    store.insert_skipped(
+        raw("https://a.example.org/x", "<html></html>"),
+        LangUndetectedError("doc_x", "raw/2026/11/doc_x.html", "4" * 64),
+        spec("src_t_a"),
+    )
+    assert rows(engine, "SELECT status, skip_reason FROM raw_documents") == [("skipped", "lang_undetected")]

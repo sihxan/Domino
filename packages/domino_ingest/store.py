@@ -94,18 +94,23 @@ _INSERT_DOC = text(
     """
     INSERT INTO raw_documents
       (id, source_id, url, url_hash, title, published_at, lang, doc_type, snapshot_key, snapshot_sha, text, text_sha,
-       simhash, story_id, wire_origin, status)
+       simhash, story_id, wire_origin, status, skip_reason)
     VALUES
       (:id, :source_id, :url, :url_hash, :title, :published_at, :lang, CAST(:doc_type AS doc_type), :snapshot_key,
-       :snapshot_sha, :text, :text_sha, :simhash, :story_id, :wire_origin, :status)
+       :snapshot_sha, :text, :text_sha, :simhash, :story_id, :wire_origin, :status, :skip_reason)
     ON CONFLICT (url_hash) DO NOTHING
     """
 )
 
 
-def insert_document(doc: Document, *, status: str = "new", conn: Connection | None = None) -> bool:
-    """Insert a document (SimHash stored signed). False if its `url_hash` is already stored (nothing written)."""
-    params = {**doc.model_dump(), "simhash": to_signed(doc.simhash), "status": status}
+def insert_document(
+    doc: Document, *, status: str = "new", skip_reason: str | None = None, conn: Connection | None = None
+) -> bool:
+    """Insert a document (SimHash stored signed). False if its `url_hash` is already stored (nothing written).
+
+    `skip_reason` is only for `status='skipped'` rows (`too_short`, `lang_undetected`); it is NULL otherwise.
+    """
+    params = {**doc.model_dump(), "simhash": to_signed(doc.simhash), "status": status, "skip_reason": skip_reason}
     with _conn(conn) as c:
         return c.execute(_INSERT_DOC, params).rowcount == 1
 
@@ -114,7 +119,7 @@ def insert_skipped(raw: RawDoc, error: SkippedDocError, spec: SourceSpec, *, con
     """Record a document that could not be normalized as `status='skipped'`, with the snapshot the error carries.
 
     The snapshot was stored by `normalize` already; this only writes the row (empty text, simhash 0, no story) so the
-    `url_hash` stops the document from being fetched again.
+    `url_hash` stops the document from being fetched again. `error.reason` is stored in `skip_reason`.
     """
     doc = Document(
         id=error.doc_id,
@@ -131,7 +136,7 @@ def insert_skipped(raw: RawDoc, error: SkippedDocError, spec: SourceSpec, *, con
         snapshot_key=error.snapshot_key,
         snapshot_sha=error.snapshot_sha,
     )
-    return insert_document(doc, status="skipped", conn=conn)
+    return insert_document(doc, status="skipped", skip_reason=error.reason, conn=conn)
 
 
 # Recomputed from every member document on each call, so the row is the same however many times it runs:
