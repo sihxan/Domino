@@ -4,9 +4,15 @@ version = "0.0.0"
 description = "Domino Phase 0 — daily insight report pipeline"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "boto3==1.43.123",
+    "httpx==0.28.1",
+    "neo4j==5.28.8",
+    "psycopg[binary]==3.3.7",
     "pydantic==2.14.2",
     "pydantic-settings==2.16.2",
     "python-ulid==4.1.0",
+    "redis==8.1.0",
+    "sqlalchemy==2.1.7",
 ]
 
 [dependency-groups]
@@ -64,6 +70,10 @@ strict = true
 mypy_path = "packages"
 explicit_package_bases = true
 files = ["packages", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
