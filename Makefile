@@ -19,7 +19,8 @@ down:
 	docker compose --profile app down
 
 migrate:
-	@echo "make migrate: implemented in week-1 T5" && exit 1
+	uv run alembic upgrade head
+	uv run python -c "from domino_graph.ddl import apply_ddl; print(f'neo4j ddl: {apply_ddl()} statements')"
 
 seed:
 	@echo "make seed: implemented in week-1 T7" && exit 1
