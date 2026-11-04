@@ -68,7 +68,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T3, T7
 
-- [ ] T9 — domino_ingest — normalizer·simhash·story·전재 판정
+- [x] T9 (85779f2, merge c69b3e1) — domino_ingest — normalizer·simhash·story·전재 판정
   - 명세: code-phase0.md §1.3, §1.4 · tech-phase0.md §5.1 ingest.story · decisions 2026-11-04 [ingest] simhash 부호, StoryHead/WireRules
   - 산출물: `packages/domino_ingest/{normalizer.py, simhash.py, story.py}`, `tests/unit/{test_normalizer.py, test_simhash.py, test_story.py}`
   - 완료 기준:
@@ -78,7 +78,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T3, T7
 
-- [ ] T10 — domino_ingest — chunker
+- [x] T10 (29b61e2, merge 29a7402) — domino_ingest — chunker
   - 명세: code-phase0.md §1.5 · tech-phase0.md §2.2 `chunk_tokens`/`chunk_overlap`
   - 산출물: `packages/domino_ingest/chunker.py`, `tests/unit/test_chunker.py`
   - 완료 기준: `test_chunker.py`(code §7.7) — 문단 경계 우선, 모든 chunk ≤ 512 토큰, 인접 chunk overlap ≈ 64 토큰, 모든 chunk에서 `doc.text[c.char_start:c.char_end] == c.text`, 한국어·영어 fixture 각 1
