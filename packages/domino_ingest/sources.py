@@ -13,9 +13,10 @@ from sqlalchemy import Engine, text
 from domino_core.clients.db import connection
 from domino_core.errors import PermanentError
 from domino_core.models import SourceSpec
+from domino_ingest.crawlers import CRAWLERS
 
-# Crawler class names `SourceSpec.parser` may use. The crawlers themselves arrive in T8 (`crawlers.CRAWLERS`).
-CRAWLER_NAMES = frozenset({"RssCrawler", "HtmlListCrawler"})
+# Crawler class names `SourceSpec.parser` may use: the keys of `crawlers.CRAWLERS`.
+CRAWLER_NAMES = frozenset(CRAWLERS)
 
 WIRES_FILE = "wires.yaml"
 

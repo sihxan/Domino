@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Statistics Office — Press Releases</title>
+    <link>https://www.example.org/press/</link>
+    <description>Official releases from the Example Statistics Office</description>
+    <language>en</language>
+    <item>
+      <title>Industrial production rose 0.4% in September</title>
+      <link>https://www.example.org/news/a</link>
+      <pubDate>Tue, 03 Nov 2026 10:00:00 GMT</pubDate>
+      <description>Output of manufacturing and utilities increased.</description>
+    </item>
+    <item>
+      <title>Producer prices unchanged in October</title>
+      <link>/news/b</link>
+      <pubDate>Mon, 02 Nov 2026 08:30:00 +0000</pubDate>
+      <description>The producer price index was flat on the month.</description>
+    </item>
+    <item>
+      <title>Quarterly employment survey, third quarter</title>
+      <link>https://www.example.org/news/c-old</link>
+      <pubDate>Thu, 01 Oct 2026 09:00:00 GMT</pubDate>
+      <description>Employment by sector, published last month.</description>
+    </item>
+    <item>
+      <title>Revised calendar of upcoming releases</title>
+      <link>https://www.example.org/news/d-undated</link>
+      <description>This entry carries no publication date.</description>
+    </item>
+    <item>
+      <title>Entry without a link</title>
+      <pubDate>Tue, 03 Nov 2026 11:00:00 GMT</pubDate>
+      <description>Nothing to fetch for this one.</description>
+    </item>
+  </channel>
+</rss>
