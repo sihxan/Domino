@@ -7,14 +7,14 @@
 
 ## 태스크 (의존 순서대로)
 
-- [ ] T1 — 레포 루트 — uv 프로젝트·도구 설정·패키지 골격·Makefile 뼈대
+- [x] T1 (59b5116) — 레포 루트 — uv 프로젝트·도구 설정·패키지 골격·Makefile 뼈대
   - 명세: tech-phase0.md §2, §2.1, §7.5 · code-phase0.md §0.1
   - 산출물: `pyproject.toml`(Python 3.12, ruff, mypy strict, pytest, import-linter 계약 `core←ingest←extract←resolve←graph←signals←agent←report←eval`), `uv.lock`, `packages/domino_{core,ingest,extract,resolve,graph,signals,agent,report,eval}/__init__.py`(docstring 1줄), `tests/{unit,integration,golden}/`, `tests/conftest.py`, `Makefile`(test 타깃 동작, 나머지는 해당 태스크에서 채움), `.env.example`(tech §2.2 키 이름 전부, 값 없음)
   - 완료 기준: `uv sync` 성공, `make test` 초록(ruff + mypy --strict + lint-imports + pytest — `tests/unit/test_layout.py::test_packages_importable` 1개), `lint-imports` 계약 1개 KEPT
   - 추정: S (1.5h) · 모델: sonnet
   - 선행: 없음
 
-- [ ] T2 — domino_core — errors·ids·timeutil·settings·models
+- [x] T2 (95ee49a) — domino_core — errors·ids·timeutil·settings·models
   - 명세: code-phase0.md §0.2, §0.3, §0.6 · tech-phase0.md §2.2, §2.3
   - 산출물: `packages/domino_core/{errors.py, ids.py, timeutil.py, settings.py, models.py}`, `tests/unit/{test_ids.py, test_timeutil.py, test_settings.py, test_models.py}`
   - 완료 기준:
