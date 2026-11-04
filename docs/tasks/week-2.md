@@ -48,7 +48,7 @@
   - 추정: M (2.5h) · 모델: sonnet
   - 선행: T2 (같은 flow 파일)
 
-- [ ] T4 — flows + 레포 루트 — Prefect deployment(`ingest` `*/15`, 동시성 1) + 한국어 입력 확보(L12) (week-1 T14)
+- [x] (9c068ef) T4 — flows + 레포 루트 — Prefect deployment(`ingest` `*/15`, 동시성 1) + 한국어 입력 확보(L12) (week-1 T14)
   - 명세: tech-phase0.md §6.1, §2 레포 트리 `flows/deploy.py` · review "다음 주로 넘어가면 안 되는 것" · **결정 W2-2, W2-3**
   - 산출물: `flows/deploy.py`(`build_deployments()`가 배포 객체 목록을 돌려주고 `__main__`이 등록; `ingest` cron `*/15 * * * *` timezone `Asia/Seoul`, `concurrency_limit=1`·collision `CANCEL_NEW`, work pool `default`), `Makefile`의 `deploy`(`docker compose exec prefect-worker python flows/deploy.py`), `tests/unit/test_deploy.py`, `docs/runbook.md`에 "deploy·코드 변경 후 재배포·KR lookback" 3줄
   - 완료 기준:
@@ -58,6 +58,7 @@
     - KR lookback 1회(결정 W2-3의 SQL) 다음 run 뒤 `select count(*) from chunks c join raw_documents d on d.id = c.doc_id where d.lang = 'ko'` > 0 — 값을 커밋 본문과 아래 T15에 기록(15 미만이면 T15의 보충 경로)
   - 추정: S (2h) · 모델: sonnet
   - 선행: T2, T3 (H1·H2를 닫기 전에 무인 실행을 켜지 않는다)
+  - 관측(2026-11-04 15:31~16:05 KST): `deployment ls`에 `ingest/ingest`, inspect로 cron `*/15 * * * *` Asia/Seoul·limit 1·`CANCEL_NEW` 확인, 겹친 수동 run은 `Cancelled`("Deployment concurrency limit reached"). 스케줄 run 2개 `Completed`(15:45 KST 0.2초 — 직전 수동 run 직후라 due 소스 없음, 16:00 KST 3분 56초 < 450초 예산). `raw_documents` 19(배포 직후) → 28(수동 run 55초) → 113(16:00 run 뒤), chunk 18 → 76. KR lookback(W2-3)은 첫 스케줄 run 뒤 1회 실행했고 16:00 run 뒤 BOK·MOEF는 따라잡았으나 MSIT는 `last_ok_at`이 아직 lookback 값(예산 잘림 → 다음 run에서 이어 받음).
 
 - [x] T5 (14c876b, merge 3165ede) — domino_ingest — 통신사 키 검증(③ 로더), `make seed`가 `enabled`를 안 덮음(④), 전재 비교에서 제목 제외(decisions:104), simhash 동어반복 테스트(L6)
   - 명세: code-phase0.md §1.4, §1.6 끝 `upsert_sources` 문장 · decisions ③·④·:104 · review L2·L6, "A 프롬프트에 넣을 한 줄" 3
@@ -167,6 +168,7 @@
   - 산출물: `packages/domino_eval/gold/extract_030.jsonl`, `docs/review/golden-ext-1.0.md`(Metrics 표·비용·실패 상위 유형 3)
   - 완료 기준: 30줄이 `GoldItem`으로 로드됨(`uv run python -c "from domino_eval.gold import load_gold; assert len(load_gold('packages/domino_eval/gold/extract_030.jsonl')) == 30"`), ko 15·en 15, 인과 없음(has_causal false) 각 언어 ≥ 4; `make golden` **1회** 실행(예상 비용 ≤ $0.5, 예산 키 `budget:golden:<date>` 한도 $2) 결과를 `golden-ext-1.0.md`에 기록 — 임계 미달이어도 측정 자체가 완료 기준
   - 추정: M (3h 사람 + 0.5h sonnet 보조) · 모델: sonnet(내보내기·기록 보조) — 라벨은 사람만
+  - 메모(T4): KR lookback 후 한국어 chunk 46개(2026-11-04 16:05 KST, 첫 스케줄 run 뒤 1회 실행·16:00 run 뒤 측정) — 15 이상이라 보충 경로 불필요(인과 서술 포함 여부는 T14 내보내기·T15 라벨링에서 판단, MSIT 소스가 아직 수집 중이라 더 늘 수 있음).
   - 선행: T4(KR chunk), T14
 
 - [ ] T16 — domino_extract — 프롬프트 튜닝 1라운드 (프롬프트 E)
