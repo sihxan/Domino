@@ -105,6 +105,7 @@ markers = [
 
 [tool.importlinter]
 root_packages = [
+    "flows",
     "domino_core",
     "domino_ingest",
     "domino_extract",
@@ -121,6 +122,7 @@ include_external_packages = true
 name = "External I/O only via domino_core.clients (CLAUDE.md rules 4, 5)"
 type = "forbidden"
 source_modules = [
+    "flows",
     "domino_ingest",
     "domino_extract",
     "domino_resolve",
@@ -130,7 +132,7 @@ source_modules = [
     "domino_report",
     "domino_eval",
 ]
-forbidden_modules = ["anthropic", "httpx", "neo4j", "redis", "boto3", "botocore"]
+forbidden_modules = ["anthropic", "httpx", "neo4j", "redis", "boto3", "botocore", "langfuse"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
