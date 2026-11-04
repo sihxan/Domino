@@ -7,7 +7,34 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import pytest
 
 from domino_core.errors import PermanentError
+from domino_core.settings import get_settings
 from domino_core.timeutil import KST, asof_for, now_utc, report_date, to_kst
+
+REQUIRED_ENV = {
+    "PG_DSN": "postgresql+psycopg://u:p@localhost:5432/domino",
+    "NEO4J_URI": "bolt://localhost:7687",
+    "NEO4J_USER": "neo4j",
+    "NEO4J_PASSWORD": "x",
+    "REDIS_URL": "redis://localhost:6379/0",
+    "S3_ENDPOINT": "http://localhost:9000",
+    "S3_KEY": "x",
+    "S3_SECRET": "x",
+    "LANGFUSE_HOST": "http://localhost:3000",
+    "LANGFUSE_PUBLIC_KEY": "pk-test",
+    "LANGFUSE_SECRET_KEY": "x",
+    "ANTHROPIC_API_KEY": "x",
+    "RESEND_API_KEY": "x",
+    "FROM_EMAIL": "report@example.com",
+}
+
+
+@pytest.fixture
+def hour_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """Fixed environment for get_settings(); the autouse conftest fixture clears the cache around each test."""
+    for key, value in REQUIRED_ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("REPORT_HOUR_KST", raising=False)
+    return monkeypatch
 
 
 def test_kst_is_asia_seoul() -> None:
@@ -41,10 +68,43 @@ def test_report_date_rejects_naive() -> None:
         report_date(datetime(2026, 11, 3, 15, 0, 0))
 
 
-def test_asof_for_is_0600_kst_in_utc() -> None:
+def test_asof_for_default_hour_is_0600_kst_in_utc(hour_env: pytest.MonkeyPatch) -> None:
     asof = asof_for(date(2026, 11, 4))
     assert asof == datetime(2026, 11, 3, 21, 0, 0, tzinfo=UTC)
     assert asof.utcoffset() == timedelta(0)
+
+
+def test_asof_for_reads_report_hour_kst_6(hour_env: pytest.MonkeyPatch) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", "6")
+    assert asof_for(date(2026, 11, 4)) == datetime(2026, 11, 3, 21, 0, 0, tzinfo=UTC)
+
+
+def test_asof_for_reads_report_hour_kst_7(hour_env: pytest.MonkeyPatch) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", "7")
+    asof = asof_for(date(2026, 11, 4))
+    assert asof == datetime(2026, 11, 3, 22, 0, 0, tzinfo=UTC)
+    assert asof.utcoffset() == timedelta(0)
+
+
+def test_asof_for_hour_zero_is_previous_day_1500_utc(hour_env: pytest.MonkeyPatch) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", "0")
+    assert asof_for(date(2026, 11, 4)) == datetime(2026, 11, 3, 15, 0, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("hour", ["24", "-1"])
+def test_asof_for_rejects_out_of_range_hour(hour_env: pytest.MonkeyPatch, hour: str) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", hour)
+    with pytest.raises(PermanentError):
+        asof_for(date(2026, 11, 4))
+
+
+def test_asof_for_follows_settings_after_cache_clear(hour_env: pytest.MonkeyPatch) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", "7")
+    assert asof_for(date(2026, 11, 4)).hour == 22
+    hour_env.setenv("REPORT_HOUR_KST", "6")
+    assert asof_for(date(2026, 11, 4)).hour == 22  # settings are cached per process
+    get_settings.cache_clear()
+    assert asof_for(date(2026, 11, 4)).hour == 21
 
 
 def test_to_kst_converts_timezone() -> None:

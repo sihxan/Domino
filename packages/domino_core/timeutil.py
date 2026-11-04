@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from domino_core.errors import PermanentError
+from domino_core.settings import get_settings
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -24,8 +25,11 @@ def report_date(now: datetime | None = None) -> date:  # KST 기준 오늘
     return to_kst(now if now is not None else now_utc()).date()
 
 
-def asof_for(report_date: date) -> datetime:  # 06:00 KST → UTC
-    return datetime.combine(report_date, time(6, 0), tzinfo=KST).astimezone(UTC)
+def asof_for(report_date: date) -> datetime:  # settings.report_hour_kst(기본 6)시 KST → UTC
+    hour = get_settings().report_hour_kst
+    if not 0 <= hour <= 23:
+        raise PermanentError(f"report_hour_kst must be 0..23, got {hour}")
+    return datetime.combine(report_date, time(hour, 0), tzinfo=KST).astimezone(UTC)
 
 
 def to_kst(dt: datetime) -> datetime:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -53,3 +54,9 @@ class Settings(BaseSettings):
     resend_api_key: SecretStr
     from_email: str
     beta_list_path: Path = Path("beta.yaml")
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Process-wide Settings built once from the environment (tests reset it with `get_settings.cache_clear()`)."""
+    return Settings()  # type: ignore[call-arg]

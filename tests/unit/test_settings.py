@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from domino_core.settings import Settings
+from domino_core.settings import Settings, get_settings
 
 REQUIRED_ENV = {
     "PG_DSN": "postgresql+psycopg://u:p@localhost:5432/domino",
@@ -138,3 +138,21 @@ def test_secrets_not_in_repr(env: None) -> None:
     text = repr(s) + str(s) + repr(s.model_dump())
     for secret in SECRET_VALUES:
         assert secret not in text
+
+
+def test_get_settings_is_cached_per_process(env: None) -> None:
+    assert get_settings() is get_settings()
+
+
+def test_get_settings_cache_clear_rebuilds_from_env(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = get_settings()
+    monkeypatch.setenv("CHUNK_TOKENS", "256")
+    assert get_settings() is first
+    get_settings.cache_clear()
+    assert get_settings().chunk_tokens == 256
+
+
+def test_default_settings_is_the_process_wide_get_settings(env: None) -> None:
+    from domino_core.clients import default_settings
+
+    assert default_settings() is get_settings()

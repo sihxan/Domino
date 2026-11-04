@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-
-from domino_core.settings import Settings
+from domino_core.settings import Settings, get_settings
 
 
-@lru_cache(maxsize=1)
 def default_settings() -> Settings:
-    """Settings from the environment, built once per process for the default clients."""
-    return Settings()  # type: ignore[call-arg]
+    """Settings for the default clients: the process-wide `get_settings()` instance."""
+    return get_settings()
