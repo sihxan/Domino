@@ -95,6 +95,23 @@ root_packages = [
     "domino_report",
     "domino_eval",
 ]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "External I/O only via domino_core.clients (CLAUDE.md rules 4, 5)"
+type = "forbidden"
+source_modules = [
+    "domino_ingest",
+    "domino_extract",
+    "domino_resolve",
+    "domino_graph",
+    "domino_signals",
+    "domino_agent",
+    "domino_report",
+    "domino_eval",
+]
+forbidden_modules = ["anthropic", "httpx", "neo4j", "redis", "boto3", "botocore"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Dependency direction: core <- ingest <- extract <- resolve <- graph <- signals <- agent <- report <- eval"
