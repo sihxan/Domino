@@ -141,11 +141,11 @@ def minio_endpoint() -> Iterator[str]:
 def make_settings(pg_dsn: str, s3_endpoint: str) -> Settings:
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
-        pg_dsn=pg_dsn,
+        pg_dsn=SecretStr(pg_dsn),
         neo4j_uri="bolt://unused",
         neo4j_user="unused",
         neo4j_password=SecretStr("unused"),
-        redis_url="redis://unused",
+        redis_url=SecretStr("redis://unused"),
         s3_endpoint=s3_endpoint,
         s3_bucket=BUCKET,
         s3_key=SecretStr(MINIO_USER),

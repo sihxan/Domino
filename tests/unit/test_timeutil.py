@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -98,13 +99,47 @@ def test_asof_for_rejects_out_of_range_hour(hour_env: pytest.MonkeyPatch, hour: 
         asof_for(date(2026, 11, 4))
 
 
-def test_asof_for_follows_settings_after_cache_clear(hour_env: pytest.MonkeyPatch) -> None:
-    hour_env.setenv("REPORT_HOUR_KST", "7")
-    assert asof_for(date(2026, 11, 4)).hour == 22
-    hour_env.setenv("REPORT_HOUR_KST", "6")
-    assert asof_for(date(2026, 11, 4)).hour == 22  # settings are cached per process
-    get_settings.cache_clear()
+def test_asof_for_without_other_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """⑥/L10: asof_for is pure — only REPORT_HOUR_KST is read, no other required setting."""
+    for key in REQUIRED_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)  # no .env here either
+    monkeypatch.setenv("REPORT_HOUR_KST", "6")
+    assert asof_for(date(2026, 11, 4)) == datetime(2026, 11, 3, 21, 0, 0, tzinfo=UTC)
+
+
+def test_asof_for_default_hour_without_any_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for key in [*REQUIRED_ENV, "REPORT_HOUR_KST"]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert asof_for(date(2026, 11, 4)) == datetime(2026, 11, 3, 21, 0, 0, tzinfo=UTC)
+
+
+def test_asof_for_empty_hour_keeps_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("REPORT_HOUR_KST", "")
     assert asof_for(date(2026, 11, 4)).hour == 21
+
+
+def test_asof_for_reads_dotenv_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The light path reads `.env` like Settings does, so a dev's file value is honored."""
+    monkeypatch.delenv("REPORT_HOUR_KST", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("REPORT_HOUR_KST=7\n", encoding="utf-8")
+    assert asof_for(date(2026, 11, 4)).hour == 22
+
+
+def test_asof_for_matches_settings_field(hour_env: pytest.MonkeyPatch) -> None:
+    """Settings.report_hour_kst and asof_for read the same variable (decision ⑥ keeps one source)."""
+    hour_env.setenv("REPORT_HOUR_KST", "7")
+    assert get_settings().report_hour_kst == 7
+    assert asof_for(date(2026, 11, 4)).hour == 22
+
+
+def test_asof_for_garbage_hour_is_permanent(hour_env: pytest.MonkeyPatch) -> None:
+    hour_env.setenv("REPORT_HOUR_KST", "six")
+    with pytest.raises(PermanentError):
+        asof_for(date(2026, 11, 4))
 
 
 def test_to_kst_converts_timezone() -> None:
