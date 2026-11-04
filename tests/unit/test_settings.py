@@ -1,0 +1,116 @@
+"""domino_core.settings: environment-driven Settings with tech §2.2 defaults."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from pydantic import SecretStr
+
+from domino_core.settings import Settings
+
+REQUIRED_ENV = {
+    "PG_DSN": "postgresql+psycopg://u:p@localhost:5432/domino",
+    "NEO4J_URI": "bolt://localhost:7687",
+    "NEO4J_USER": "neo4j",
+    "NEO4J_PASSWORD": "neo4j-secret-value",
+    "REDIS_URL": "redis://localhost:6379/0",
+    "S3_ENDPOINT": "http://localhost:9000",
+    "S3_KEY": "s3-key-value",
+    "S3_SECRET": "s3-secret-value",
+    "LANGFUSE_HOST": "http://localhost:3000",
+    "LANGFUSE_PUBLIC_KEY": "pk-test",
+    "LANGFUSE_SECRET_KEY": "langfuse-secret-value",
+    "ANTHROPIC_API_KEY": "anthropic-secret-value",
+    "RESEND_API_KEY": "resend-secret-value",
+    "FROM_EMAIL": "report@example.com",
+}
+SECRET_VALUES = [
+    "neo4j-secret-value",
+    "s3-key-value",
+    "s3-secret-value",
+    "langfuse-secret-value",
+    "anthropic-secret-value",
+    "resend-secret-value",
+]
+
+
+@pytest.fixture
+def env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ["ENV", "TZ", "MODEL_EXTRACT", "MODEL_JUDGE", "MODEL_LEAD", "MODEL_WORKER", "MODEL_EDITORIAL"]:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in REQUIRED_ENV.items():
+        monkeypatch.setenv(key, value)
+
+
+def make() -> Settings:
+    return Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_built_from_env(env: None) -> None:
+    s = make()
+    assert s.pg_dsn == REQUIRED_ENV["PG_DSN"]
+    assert s.neo4j_uri == REQUIRED_ENV["NEO4J_URI"]
+    assert s.from_email == REQUIRED_ENV["FROM_EMAIL"]
+    assert s.anthropic_api_key.get_secret_value() == "anthropic-secret-value"
+
+
+def test_env_overrides_default(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_EXTRACT", "claude-other")
+    monkeypatch.setenv("CHUNK_TOKENS", "256")
+    s = make()
+    assert s.model_extract == "claude-other"
+    assert s.chunk_tokens == 256
+
+
+def test_missing_required_fails(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.delenv("PG_DSN")
+    with pytest.raises(ValidationError):
+        make()
+
+
+def test_defaults_match_tech_spec(env: None) -> None:
+    s = make()
+    assert s.env == "dev"
+    assert s.tz == "Asia/Seoul"
+    assert s.s3_bucket == "domino"
+    assert s.embedder_url == "http://embedder:8080"
+    assert s.model_extract == "claude-haiku-5-5"
+    assert s.model_judge == "claude-sonnet-5-5"
+    assert s.model_lead == "claude-sonnet-5-5"
+    assert s.model_worker == "claude-haiku-5-5"
+    assert s.model_editorial == "claude-sonnet-5-5"
+    assert s.budget_extract_daily == 2.0
+    assert s.budget_report_run == 5.0
+    assert s.budget_judge_daily == 1.0
+    assert s.chunk_tokens == 512
+    assert s.chunk_overlap == 64
+    assert s.simhash_threshold == 6
+    assert s.resolver_auto_cos == 0.92
+    assert s.resolver_judge_cos == 0.80
+    assert s.confirm_min_publishers == 2
+    assert s.report_hour_kst == 6
+    assert s.personas_path == Path("packages/domino_report/personas.yaml")
+    assert s.beta_list_path == Path("beta.yaml")
+
+
+def test_secrets_are_secretstr(env: None) -> None:
+    s = make()
+    for field in [
+        "neo4j_password",
+        "s3_key",
+        "s3_secret",
+        "langfuse_secret_key",
+        "anthropic_api_key",
+        "resend_api_key",
+    ]:
+        assert isinstance(getattr(s, field), SecretStr)
+
+
+def test_secrets_not_in_repr(env: None) -> None:
+    s = make()
+    text = repr(s) + str(s) + repr(s.model_dump())
+    for secret in SECRET_VALUES:
+        assert secret not in text
