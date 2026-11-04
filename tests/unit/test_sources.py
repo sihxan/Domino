@@ -157,6 +157,42 @@ def test_empty_directory_rejected(tmp_path: Path) -> None:
         load_sources(tmp_path)
 
 
+# --- wire key validation (decisions ③) -----------------------------------------------------------------------------
+
+
+def test_wire_must_be_wires_key(tmp_path: Path) -> None:
+    (tmp_path / "wires.yaml").write_text("reuters: ['^\\(Reuters\\)']\nyonhap: ['\\(Yonhap\\)']\n", encoding="utf-8")
+    write_sources(tmp_path, "us", [entry(id="src_us_wire", wire="reuterz")])
+    with pytest.raises(PermanentError, match="reuterz"):
+        load_sources(tmp_path)
+    write_sources(tmp_path, "us", [entry(id="src_us_wire", wire="reuters")])
+    assert load_sources(tmp_path)[0].wire == "reuters"
+
+
+def test_wire_key_is_case_sensitive(tmp_path: Path) -> None:
+    # The stored key must equal the wires.yaml key, or `coalesce(wire_origin, publisher)` splits one origin in two.
+    (tmp_path / "wires.yaml").write_text("reuters: ['^\\(Reuters\\)']\n", encoding="utf-8")
+    write_sources(tmp_path, "us", [entry(wire="Reuters")])
+    with pytest.raises(PermanentError, match="Reuters"):
+        load_sources(tmp_path)
+
+
+def test_wire_without_wires_yaml_rejected(tmp_path: Path) -> None:
+    write_sources(tmp_path, "us", [entry(wire="reuters")])
+    with pytest.raises(PermanentError, match=r"wires\.yaml"):
+        load_sources(tmp_path)
+
+
+def test_sources_without_wire_need_no_wires_yaml(tmp_path: Path) -> None:
+    write_sources(tmp_path, "us", [entry()])
+    assert load_sources(tmp_path)[0].wire is None
+
+
+def test_repo_sources_wire_keys_are_valid() -> None:
+    wires = load_wires(SOURCES_DIR / "wires.yaml")
+    assert all(s.wire is None or s.wire in wires for s in load_sources(SOURCES_DIR))
+
+
 # --- wires -----------------------------------------------------------------------------------------------------------
 
 

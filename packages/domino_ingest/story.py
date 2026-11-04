@@ -51,25 +51,44 @@ def assign_story(doc: Document, recent: list[StoryHead], threshold: int = 6, *, 
     return best.id if best else new_id("sty")
 
 
-def _lead_simhash(text: str) -> int:
-    return simhash64(shingles(text[:WIRE_LEAD_CHARS]))
+def lead_text(text: str, title: str | None) -> str:
+    """Reprint comparison target: first 300 chars of `text` after a leading copy of `title` (whitespace-normalized).
+
+    trafilatura puts the headline in front of the body, so a reprint under another headline would otherwise differ
+    within the first 300 chars. Without a title, or if the text does not start with it, the text is used as is.
+    """
+    words = (title or "").split()
+    if words:
+        head = re.match(r"\s*" + r"\s+".join(map(re.escape, words)), text)
+        if head:
+            text = text[head.end() :].lstrip()
+    return text[:WIRE_LEAD_CHARS]
+
+
+def _lead_simhash(text: str, title: str | None) -> int:
+    return simhash64(shingles(lead_text(text, title)))
 
 
 def detect_wire(doc: Document, same_story_docs: list[Document], wires: WireRules) -> str | None:
     """Wire agency or original publisher this document reprints, or None.
 
-    1) A wires.yaml byline pattern matches the first 300 chars → that agency.
-    2) Otherwise, if another document of the story with the same first 300 chars (SimHash ≤ 3) was collected earlier
+    Both steps look at `lead_text`: the first 300 chars of the body after the headline.
+    1) A wires.yaml byline pattern matches it → that agency.
+    2) Otherwise, if another document of the story with the same lead (SimHash ≤ 3) was collected earlier
        (smaller ULID id) → that document's wire_origin, else its wire agency/publisher name.
     """
-    lead = doc.text[:WIRE_LEAD_CHARS]
+    lead = lead_text(doc.text, doc.title)
     for name, patterns in wires.patterns.items():
         if any(p.search(lead) for p in patterns):
             return name
 
-    lead_hash = _lead_simhash(doc.text)
+    if not lead:
+        return None
+    lead_hash = _lead_simhash(doc.text, doc.title)
     earlier = [
-        d for d in same_story_docs if d.id < doc.id and hamming(lead_hash, _lead_simhash(d.text)) <= WIRE_HAMMING
+        d
+        for d in same_story_docs
+        if d.id < doc.id and hamming(lead_hash, _lead_simhash(d.text, d.title)) <= WIRE_HAMMING
     ]
     if not earlier:
         return None

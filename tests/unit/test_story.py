@@ -10,7 +10,7 @@ import pytest
 
 from domino_core.models import Document
 from domino_ingest.simhash import hamming, shingles, simhash64
-from domino_ingest.story import StoryHead, WireRules, assign_story, detect_wire
+from domino_ingest.story import StoryHead, WireRules, assign_story, detect_wire, lead_text
 
 NOW = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 
@@ -48,13 +48,15 @@ def _sim300(text: str) -> int:
     return simhash64(shingles(text[:300]))
 
 
-def make_doc(doc_id: str, text: str, *, source_id: str = "src_us_a", simhash: int = 0) -> Document:
+def make_doc(
+    doc_id: str, text: str, *, source_id: str = "src_us_a", simhash: int = 0, title: str | None = None
+) -> Document:
     return Document(
         id=doc_id,
         source_id=source_id,
         url=f"https://example.com/{doc_id}",
         url_hash="0" * 64,
-        title=None,
+        title=title,
         published_at=None,
         lang="en",
         doc_type="NEWS",
@@ -214,3 +216,60 @@ def test_detect_wire_text300_hamming_boundary_3_vs_4(wires: WireRules) -> None:
     assert hamming(_sim300(first.text), _sim300(at4.text)) == 4
     assert detect_wire(at3, [first, at3], wires) == "Federal Reserve"
     assert detect_wire(at4, [first, at4], wires) is None
+
+
+# --- title-prefixed reprints (decisions:104, week-2 T5) -------------------------------------------
+
+TITLE_A = "Port backlog eases as container throughput recovers at major harbors"
+TITLE_B = "Harbor delays shrink while cargo schedule improves across terminals"
+BODY = " ".join(_words(120, seed=5))
+
+
+def test_title_prefixed_copy_detected(wires: WireRules) -> None:
+    """trafilatura puts the title in front of the body, so a reprint with another headline used to miss (hamming 14)."""
+    first = make_doc("doc_1", f"{TITLE_A}\n\n{BODY}", source_id="src_us_a", title=TITLE_A)
+    later = make_doc("doc_2", f"{TITLE_B}\n\n{BODY}", source_id="src_kr_b", title=TITLE_B)
+    assert hamming(_sim300(first.text), _sim300(later.text)) > 3  # the old comparison target really does miss
+    assert detect_wire(later, [first, later], wires) == "Federal Reserve"
+    assert detect_wire(first, [first, later], wires) is None
+
+
+def test_title_prefix_matches_after_whitespace_normalization(wires: WireRules) -> None:
+    first = make_doc("doc_1", f"{TITLE_A}\n\n{BODY}", source_id="src_us_a", title=TITLE_A)
+    spaced = TITLE_B.replace(" ", "  ", 3).replace("Harbor delays", "Harbor\ndelays")
+    later = make_doc("doc_2", f"\n{spaced}\n\n{BODY}", source_id="src_kr_b", title=TITLE_B)
+    assert detect_wire(later, [first, later], wires) == "Federal Reserve"
+
+
+def test_byline_is_matched_after_title_is_stripped(wires: WireRules) -> None:
+    """`^\\(Reuters\\)` is anchored at the start of the body, which the title used to occupy."""
+    doc = make_doc("doc_2", f"{TITLE_A}\n\n(Reuters) - {BODY}", title=TITLE_A)
+    assert detect_wire(doc, [], wires) == "reuters"
+
+
+def test_byline_inside_the_title_does_not_count(wires: WireRules) -> None:
+    title = "(Reuters) - Port backlog eases"
+    doc = make_doc("doc_2", f"{title}\n\n{BODY}", title=title)
+    assert detect_wire(doc, [], wires) is None
+
+
+def test_text_not_starting_with_title_is_compared_whole(wires: WireRules) -> None:
+    first = make_doc("doc_1", BODY, source_id="src_us_a", title=TITLE_A)
+    later = make_doc("doc_2", BODY, source_id="src_kr_b", title=TITLE_B)
+    assert detect_wire(later, [first, later], wires) == "Federal Reserve"
+    assert lead_text(BODY, TITLE_A) == BODY[:300]
+
+
+def test_lead_text_strips_title_prefix_and_takes_300_chars() -> None:
+    assert lead_text(f"{TITLE_A}\n\n{BODY}", TITLE_A) == BODY[:300]
+    # the prefix match is exact apart from whitespace: another case is not the title
+    assert lead_text(f"  {TITLE_A.upper()}\n{BODY}", TITLE_A) != BODY[:300]
+    assert lead_text(f"{TITLE_A}\n\n{BODY}", None) == f"{TITLE_A}\n\n{BODY}"[:300]
+    assert lead_text(f"{TITLE_A}\n\n{BODY}", "  ") == f"{TITLE_A}\n\n{BODY}"[:300]
+    assert lead_text(TITLE_A, TITLE_A) == ""  # a body that is only the title leaves nothing to compare
+
+
+def test_empty_lead_is_never_a_reprint(wires: WireRules) -> None:
+    first = make_doc("doc_1", TITLE_A, source_id="src_us_a", title=TITLE_A)
+    later = make_doc("doc_2", TITLE_B, source_id="src_kr_b", title=TITLE_B)
+    assert detect_wire(later, [first, later], wires) is None

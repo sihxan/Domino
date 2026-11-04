@@ -24,7 +24,8 @@ _ID = re.compile(r"src_[a-z0-9_]+")
 _COUNTRY = re.compile(r"[A-Z]{2}")
 _LANG = re.compile(r"[a-z]{2}")
 
-# Every `sources` column except the operational state (last_ok_at, last_error, fail_count): upsert never touches those.
+# Every `sources` column except the operational state (last_ok_at, last_error, fail_count) and `enabled` (auto-disabled
+# after 5 failures; only a new row takes the YAML value): upsert never touches those on conflict.
 _UPSERT = text(
     """
     INSERT INTO sources
@@ -45,8 +46,7 @@ _UPSERT = text(
       url = EXCLUDED.url,
       cadence_min = EXCLUDED.cadence_min,
       parser = EXCLUDED.parser,
-      lang = EXCLUDED.lang,
-      enabled = EXCLUDED.enabled
+      lang = EXCLUDED.lang
     """
 )
 
@@ -76,8 +76,22 @@ def _validate(spec: SourceSpec, where: str) -> None:
         raise PermanentError(f"{where}: HtmlListCrawler url needs a '#selector' fragment: {spec.url!r}")
 
 
+def _validate_wire_keys(specs: list[SourceSpec], wires_path: Path) -> None:
+    """`spec.wire` becomes `wire_origin`, which must equal the key `detect_wire` returns for reprints."""
+    wired = [s for s in specs if s.wire is not None]
+    if not wired:
+        return
+    keys = set(load_wires(wires_path))
+    for spec in wired:
+        if spec.wire not in keys:
+            raise PermanentError(f"{spec.id}: wire {spec.wire!r} is not a key of {WIRES_FILE} {sorted(keys)}")
+
+
 def load_sources(directory: Path) -> list[SourceSpec]:
-    """Validate every `<dir>/*.yaml` except `wires.yaml` into `SourceSpec`s; duplicate ids are rejected."""
+    """Validate every `<dir>/*.yaml` except `wires.yaml` into `SourceSpec`s; duplicate ids are rejected.
+
+    A `wire` value must be a key of `<dir>/wires.yaml` (read only when some source sets `wire`).
+    """
     files = sorted(p for p in directory.glob("*.yaml") if p.name != WIRES_FILE)
     if not files:
         raise PermanentError(f"no source yaml files in {directory}")
@@ -98,6 +112,7 @@ def load_sources(directory: Path) -> list[SourceSpec]:
                 raise PermanentError(f"{where}: duplicate source id {spec.id!r} (first in {seen[spec.id]})")
             seen[spec.id] = where
             specs.append(spec)
+    _validate_wire_keys(specs, directory / WIRES_FILE)
     return specs
 
 
@@ -121,7 +136,7 @@ def load_wires(path: Path) -> dict[str, list[re.Pattern[str]]]:
 
 
 def upsert_sources(specs: list[SourceSpec], *, engine: Engine | None = None) -> int:
-    """Upsert specs into `sources` by id in one transaction; last_ok_at/last_error/fail_count are left alone."""
+    """Upsert specs by id in one transaction; last_ok_at/last_error/fail_count and `enabled` of existing rows stay."""
     if not specs:
         return 0
     rows = [s.model_dump() for s in specs]
