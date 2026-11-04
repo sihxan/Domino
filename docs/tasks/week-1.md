@@ -26,7 +26,7 @@
   - 추정: M (2.5h) · 모델: sonnet
   - 선행: T1
 
-- [ ] T3 — domino_core — clients: db·redis·s3·http·neo
+- [x] T3 (b82aecc) — domino_core — clients: db·redis·s3·http·neo
   - 명세: code-phase0.md §0.1, §0.2 · tech-phase0.md §1.1, §2.2 · decisions 2026-11-04 [core] http
   - 산출물: `packages/domino_core/clients/{__init__.py, db.py, redis.py, s3.py, http.py, neo.py}`, `tests/unit/test_clients.py`
   - 완료 기준: `test_clients.py` — (http) 5xx·timeout→`TransientError`, 4xx→`PermanentError`, 고정 UA 헤더; (s3) `put_immutable`이 기존 키면 덮어쓰지 않음; (neo) `run_cypher_file`이 `;` 단위로 분리 실행; 모두 하위 SDK mock. `make test` 초록
