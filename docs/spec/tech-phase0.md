@@ -584,7 +584,7 @@ ORDER BY r.created_at DESC LIMIT 200
 
 | 단계 | 입력 | 출력 | 멱등 키 | 실패 정책 | 일 예산 |
 | --- | --- | --- | --- | --- | --- |
-| ingest.fetch | `sources` (enabled, cadence 도래) | `raw_documents` (status=new) + minio snapshot | `url_hash` | 소스별 3회 재시도(지수 백오프), 연속 5회 실패 시 `enabled=false` + 알림 | — |
+| ingest.fetch | `sources` (enabled, cadence 도래) | `raw_documents` (status=new) + minio snapshot | `url_hash` | 소스별 총 3회 시도(재시도 2회, 지수 백오프 2·4초), 연속 5회 실패 시 `enabled=false` + 알림 | — |
 | ingest.story | 신규 Document | `stories` 배정, `wire_origin` | `doc_id` | 실패 시 story 미배정으로 두고 다음 배치에서 재시도 | — |
 | ingest.chunk | Document (status=new) | `chunks` (status=new) | `(doc_id, idx)` | 결정론적, 재시도 1회 | — |
 | extract.classify | Chunk | `chunks.is_causal` | `chunk_id` | 실패 시 `is_causal=true`로 보수적 통과 | $0.3 |

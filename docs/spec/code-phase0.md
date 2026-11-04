@@ -185,9 +185,10 @@ def chunk(doc: Document, *, max_tokens: int = 512, overlap: int = 64) -> list[Ch
 ```python
 @flow(name="ingest", timeout_seconds=600)
 def ingest_flow(now: datetime | None = None):
-    for spec, state in due_sources(now):               # cadence 도래 + enabled; state = SourceState(last_ok_at, fail_count)
+    for spec, state in due_sources(now):               # cadence 도래(now - last_ok_at ≥ cadence_min - 1분) + enabled; state = SourceState(last_ok_at, fail_count)
         try:
-            raws = CRAWLERS[spec.parser]().fetch(spec, since=state.last_ok_at or now - 24h)
+            raws = with_retry(lambda: CRAWLERS[spec.parser]().fetch(spec, since=state.last_ok_at or now - 24h))
+                                                         # TransientError면 지수 백오프(2·4초)로 총 3회 시도, PermanentError는 즉시 실패
         except DominoError: mark_fail(spec); continue    # Transient·Permanent 모두 그 소스만 건너뜀, fail_count += 1 (연속 5회면 enabled=false)
         for raw in raws:
             if exists(url_hash(raw.url)): continue       # 멱등
