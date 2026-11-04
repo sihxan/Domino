@@ -40,14 +40,14 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T1
 
-- [ ] T5 — 레포 루트 + domino_graph — 마이그레이션 0001·Neo4j DDL·`make migrate`
+- [x] T5 (86efeff) — 레포 루트 + domino_graph — 마이그레이션 0001·Neo4j DDL·`make migrate`
   - 명세: tech-phase0.md §3 (3.1~3.5 DDL 전부), §4.3 · 이 세션은 예외적으로 `domino_graph/ddl/`만 같이 만든다
   - 산출물: `alembic.ini`, `migrations/env.py`, `migrations/versions/0001_phase0.py`(tech §3 SQL 그대로), `packages/domino_graph/ddl/0001_schema.cypher`(tech §4.3 그대로), `packages/domino_graph/ddl/__init__.py`(`apply_ddl()`), `Makefile`의 `migrate`, `tests/integration/test_migrate.py`
   - 완료 기준: `test_migrate.py`(testcontainers) — `alembic upgrade head` 후 테이블 집합이 tech §3의 CREATE TABLE 목록과 정확히 일치, `downgrade base`→`upgrade head` 재실행 무오류; Neo4j DDL 2회 실행 후 `SHOW CONSTRAINTS` 7개·`SHOW INDEXES`에 §4.3의 9개 이름 존재. 로컬 `make migrate` 2회 연속 성공
   - 추정: M (3h) · 모델: sonnet
   - 선행: T3, T4
 
-- [ ] T6 — 레포 루트 — CI (GitHub Actions lint·unit)
+- [x] T6 (4a23ccd) — 레포 루트 — CI (GitHub Actions lint·unit)
   - 명세: tech-phase0.md §7.1, §7.5 (이번 주는 lint·unit만)
   - 산출물: `.github/workflows/ci.yml`
   - 완료 기준: push 후 `gh run list --limit 1`이 `completed success`; job은 `uv sync --frozen` → ruff → mypy --strict → lint-imports → `pytest tests/unit`
