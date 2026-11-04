@@ -21,6 +21,7 @@ dependencies = [
     "pysbd==0.3.4",
     "python-ulid==4.1.0",
     "pyyaml==6.0.3",
+    "rapidfuzz==3.14.6",
     "redis==8.1.0",
     "sqlalchemy==2.1.7",
     "structlog==26.1.0",
