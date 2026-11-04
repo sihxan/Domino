@@ -13,7 +13,7 @@ from domino_core.clients import http
 from domino_core.errors import PermanentError, TransientError
 from domino_core.models import SourceSpec
 from domino_ingest.crawlers import CRAWLERS, base
-from domino_ingest.crawlers.base import Clock
+from domino_ingest.crawlers.base import Clock, skip_known
 from domino_ingest.crawlers.html_list import HtmlListCrawler
 from domino_ingest.crawlers.rss import RssCrawler
 from domino_ingest.sources import CRAWLER_NAMES
@@ -287,3 +287,40 @@ def test_html_list_article_4xx_skipped_transient_propagates(net: FakeNet) -> Non
     net.routes["https://other.example.net/d"] = TransientError("http 503")
     with pytest.raises(TransientError):
         HtmlListCrawler().fetch(spec("HtmlListCrawler", f"{LIST_URL}#ul.news-list a", "html"), SINCE)
+
+
+# --- skip_known (week-1 T11: already-stored URLs are not fetched again) ----------------------------
+
+
+def test_rss_known_urls_are_not_fetched(net: FakeNet) -> None:
+    rss_net(net)
+    stored = {"https://www.example.org/news/a", "https://www.example.org/news/d-undated"}
+    seen_batches: list[list[str]] = []
+
+    def is_known(urls: list[str]) -> set[str]:
+        seen_batches.append(urls)
+        return {u for u in urls if u in stored}
+
+    with skip_known(is_known):
+        docs = RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE)
+    assert [d.url for d in docs] == ["https://www.example.org/news/b"]
+    assert net.requested() == [FEED_URL, "https://www.example.org/news/b"]  # the undated entry is not re-downloaded
+    assert len(seen_batches) == 1  # one lookup per source, not one per entry
+
+
+def test_html_list_known_urls_are_not_fetched(net: FakeNet) -> None:
+    list_net(net)
+    first = HtmlListCrawler().fetch(spec("HtmlListCrawler", f"{LIST_URL}#ul.news-list a", "html"), SINCE)
+    net.calls.clear()
+    stored = {first[0].url}
+    with skip_known(lambda urls: {u for u in urls if u in stored}):
+        docs = HtmlListCrawler().fetch(spec("HtmlListCrawler", f"{LIST_URL}#ul.news-list a", "html"), SINCE)
+    assert [d.url for d in docs] == [d.url for d in first[1:]]
+    assert first[0].url not in net.requested()
+
+
+def test_skip_known_only_applies_inside_the_block(net: FakeNet) -> None:
+    rss_net(net)
+    with skip_known(lambda urls: set(urls)):
+        assert RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE) == []
+    assert len(RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE)) == 3

@@ -13,6 +13,7 @@ dependencies = [
     "langdetect==1.0.9",
     "lxml==6.1.3",
     "neo4j==5.28.8",
+    "prefect==3.9.1",
     "protego==0.7.0",
     "psycopg[binary]==3.3.7",
     "pydantic-settings==2.16.2",
@@ -83,7 +84,7 @@ python_version = "3.12"
 strict = true
 mypy_path = "packages"
 explicit_package_bases = true
-files = ["packages", "tests"]
+files = ["packages", "flows", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["boto3", "boto3.*", "botocore", "botocore.*", "feedparser", "feedparser.*", "lxml", "lxml.*", "langdetect", "langdetect.*"]
@@ -96,6 +97,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
 addopts = "--import-mode=importlib -ra"
+pythonpath = ["."]  # `flows/` (repo root) is importable from tests
 markers = [
     "integration: needs testcontainers (Docker)",
     "golden: real LLM calls, cost incurred",

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -21,6 +23,21 @@ MIN_INTERVAL_S = 2.0
 ROBOTS_TTL_S = 24 * 3600.0
 
 log = get_logger("domino_ingest.fetch")
+
+# Given candidate URLs, the ones already stored. Set by the caller (ingest_flow) with `skip_known`, so crawlers keep
+# their `fetch(spec, since)` signature and never touch the database themselves.
+KnownUrls = Callable[[list[str]], set[str]]
+_known_urls: ContextVar[KnownUrls | None] = ContextVar("known_urls", default=None)
+
+
+@contextmanager
+def skip_known(is_known: KnownUrls) -> Iterator[None]:
+    """Inside the block, `collect` does not download candidates whose URL `is_known` reports as already stored."""
+    token = _known_urls.set(is_known)
+    try:
+        yield
+    finally:
+        _known_urls.reset(token)
 
 
 class Crawler(Protocol):
@@ -116,10 +133,18 @@ def collect(spec: SourceSpec, candidates: Iterable[tuple[str, str | None, dateti
     """Fetch each (url, title, published_at) candidate into a RawDoc.
 
     A 4xx or robots-disallowed page is skipped (and logged); a transient failure aborts the source so that
-    `last_ok_at` does not advance past documents that were never stored.
+    `last_ok_at` does not advance past documents that were never stored. Inside `skip_known`, candidates that are
+    already stored are not downloaded at all (undated feed entries and list pages cannot be cut off by `since`).
     """
+    pending = list(candidates)
+    is_known = _known_urls.get()
+    if is_known is not None and pending:
+        known = is_known([url for url, _, _ in pending])
+        if known:
+            log.info("known_skipped", source_id=spec.id, n=len(known))
+            pending = [c for c in pending if c[0] not in known]
     docs: list[RawDoc] = []
-    for url, title, published_at in candidates:
+    for url, title, published_at in pending:
         try:
             html, _ = fetch_html(url)
         except PermanentError as e:
