@@ -36,7 +36,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T1 권장(필수 아님)
 
-- [ ] T3 — domino_ingest + flows — Crawl-delay 소스의 600초 상한 초과·뒤 소스 굶김 해소(H2)
+- [x] (6d164f1) T3 — domino_ingest + flows — Crawl-delay 소스의 600초 상한 초과·뒤 소스 굶김 해소(H2)
   - 명세: code-phase0.md §1.2(`Crawler.fetch(spec, since)` 불변), §1.6 · tech-phase0.md §6.1 `ingest_flow` 10분 · review H2 · **결정 W2-1**
   - 산출물: `packages/domino_ingest/crawlers/base.py`(`fetch_budget(seconds)` context manager — `skip_known`과 같은 ContextVar 방식, `collect`가 다음 기사 다운로드를 시작하기 전에 `CLOCK.monotonic()`으로 기한 확인, 넘으면 멈추고 `budget.truncated = True`), `flows/ingest_flow.py`(소스당 `SOURCE_FETCH_BUDGET_S = 120`, flow 전체 `FLOW_FETCH_BUDGET_S = 450`; 소스별 기한 = min(120, flow 남은 시간); 남은 시간 < 10초면 나머지 소스는 손대지 않고 종료; 잘린 소스는 `mark_ok(at=since)`로 `last_ok_at` 전진 금지; 재시도 3회는 같은 소스 예산 안에서), `packages/domino_ingest/store.py`(`due_sources` 정렬을 `ORDER BY last_ok_at NULLS FIRST, id`로), `tests/unit/test_crawlers.py`, `tests/integration/test_ingest_integration.py`
   - 완료 기준 (테스트 먼저, 가짜 시계):
