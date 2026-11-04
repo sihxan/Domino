@@ -40,6 +40,45 @@ def skip_known(is_known: KnownUrls) -> Iterator[None]:
         _known_urls.reset(token)
 
 
+@dataclass
+class FetchBudget:
+    """A wall-clock allowance for one source's crawl: `collect` starts no download after `deadline` (CLOCK time)."""
+
+    deadline: float
+    truncated: bool = False  # set by `collect` when it stopped with candidates left to download
+
+    def remaining(self) -> float:
+        """Seconds left on the allowance (negative once it is spent)."""
+        return self.deadline - CLOCK.monotonic()
+
+    def expired(self) -> bool:
+        """True once no further download may start."""
+        return self.remaining() <= 0
+
+
+_budget: ContextVar[FetchBudget | None] = ContextVar("fetch_budget", default=None)
+
+
+@contextmanager
+def fetch_budget(seconds: float) -> Iterator[FetchBudget]:
+    """Inside the block, `collect` stops before the next download once `seconds` have passed and sets `truncated`.
+
+    Same mechanism as `skip_known`, so crawlers keep `fetch(spec, since)`. The caller (ingest_flow) wraps all of a
+    source's attempts in one block, so retries share the allowance; the caller decides what a truncated crawl means.
+    """
+    budget = FetchBudget(deadline=CLOCK.monotonic() + seconds)
+    token = _budget.set(budget)
+    try:
+        yield budget
+    finally:
+        _budget.reset(token)
+
+
+def current_budget() -> FetchBudget | None:
+    """The innermost `fetch_budget` of this context, if any."""
+    return _budget.get()
+
+
 class Crawler(Protocol):
     """A source crawler: returns the documents of `spec` published since `since` (timezone-aware)."""
 
@@ -135,6 +174,9 @@ def collect(spec: SourceSpec, candidates: Iterable[tuple[str, str | None, dateti
     A 4xx or robots-disallowed page is skipped (and logged); a transient failure aborts the source so that
     `last_ok_at` does not advance past documents that were never stored. Inside `skip_known`, candidates that are
     already stored are not downloaded at all (undated feed entries and list pages cannot be cut off by `since`).
+    Inside `fetch_budget`, no download starts once the budget is spent: the documents fetched so far are returned and
+    `budget.truncated` is set, so the caller stores them and the next run picks up the rest (a Crawl-delay-30 domain
+    would otherwise hold the whole run).
     """
     pending = list(candidates)
     is_known = _known_urls.get()
@@ -143,8 +185,13 @@ def collect(spec: SourceSpec, candidates: Iterable[tuple[str, str | None, dateti
         if known:
             log.info("known_skipped", source_id=spec.id, n=len(known))
             pending = [c for c in pending if c[0] not in known]
+    budget = _budget.get()
     docs: list[RawDoc] = []
-    for url, title, published_at in pending:
+    for i, (url, title, published_at) in enumerate(pending):
+        if budget is not None and budget.expired():
+            budget.truncated = True
+            log.warning("fetch_budget_spent", source_id=spec.id, fetched=len(docs), left=len(pending) - i)
+            break
         try:
             html, _ = fetch_html(url)
         except PermanentError as e:

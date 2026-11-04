@@ -13,7 +13,7 @@ from domino_core.clients import http
 from domino_core.errors import PermanentError, TransientError
 from domino_core.models import SourceSpec
 from domino_ingest.crawlers import CRAWLERS, base
-from domino_ingest.crawlers.base import Clock, skip_known
+from domino_ingest.crawlers.base import Clock, collect, current_budget, fetch_budget, skip_known
 from domino_ingest.crawlers.html_list import HtmlListCrawler
 from domino_ingest.crawlers.rss import RssCrawler
 from domino_ingest.sources import CRAWLER_NAMES
@@ -324,3 +324,103 @@ def test_skip_known_only_applies_inside_the_block(net: FakeNet) -> None:
     with skip_known(lambda urls: set(urls)):
         assert RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE) == []
     assert len(RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE)) == 3
+
+
+# --- fetch_budget (week-2 T3, decision W2-1: a slow Crawl-delay domain must not run past the budget) -------------
+
+
+SLOW_ROBOTS = "User-agent: *\nCrawl-delay: 30\n"
+SLOW_HOST = "https://www.example.org"
+
+
+def slow_candidates(n: int = 10) -> list[tuple[str, str | None, datetime | None]]:
+    return [(f"{SLOW_HOST}/news/{i}", f"Title {i}", None) for i in range(n)]
+
+
+def slow_net(net: FakeNet, n: int = 10) -> None:
+    net.page(f"{SLOW_HOST}/robots.txt", SLOW_ROBOTS)
+    for url, _, _ in slow_candidates(n):
+        net.page(url, ARTICLE)
+
+
+def test_collect_stops_at_budget(net: FakeNet) -> None:
+    slow_net(net)
+    with fetch_budget(120) as budget:
+        docs = collect(spec("RssCrawler", FEED_URL), slow_candidates())
+    assert 0 < len(docs) <= 5  # 30 s Crawl-delay: downloads start at 0, 30, 60, 90 and 120 s of a 120 s budget
+    assert len(net.requested()) == len(docs)  # nothing is downloaded and thrown away
+    assert [d.url for d in docs] == [u for u, _, _ in slow_candidates()][: len(docs)]  # in order, no gaps
+    assert budget.truncated is True
+
+
+def test_collect_within_budget_is_not_truncated(net: FakeNet) -> None:
+    slow_net(net, 3)
+    with fetch_budget(120) as budget:
+        docs = collect(spec("RssCrawler", FEED_URL), slow_candidates(3))
+    assert len(docs) == 3
+    assert budget.truncated is False  # the budget was enough: nothing was left over
+
+
+def test_collect_without_a_budget_is_unchanged(net: FakeNet) -> None:
+    slow_net(net)
+    docs = collect(spec("RssCrawler", FEED_URL), slow_candidates())
+    assert len(docs) == 10
+    assert net.now - 1000.0 >= 9 * 30  # the whole Crawl-delay was waited out
+    assert current_budget() is None
+
+
+def test_fetch_budget_only_applies_inside_the_block(net: FakeNet) -> None:
+    slow_net(net)
+    with fetch_budget(0):
+        assert current_budget() is not None
+    assert current_budget() is None
+    assert len(collect(spec("RssCrawler", FEED_URL), slow_candidates())) == 10
+
+
+def test_exhausted_budget_downloads_nothing_and_is_truncated(net: FakeNet) -> None:
+    slow_net(net)
+    with fetch_budget(0) as budget:
+        assert collect(spec("RssCrawler", FEED_URL), slow_candidates()) == []
+    assert budget.truncated is True
+    assert net.requested() == []
+
+
+def test_exhausted_budget_without_candidates_is_not_truncated(net: FakeNet) -> None:
+    with fetch_budget(0) as budget:
+        assert collect(spec("RssCrawler", FEED_URL), []) == []
+    assert budget.truncated is False
+
+
+def test_budget_counts_time_spent_before_collect(net: FakeNet) -> None:
+    slow_net(net)
+    with fetch_budget(120) as budget:
+        net.sleep(100)  # e.g. a retry backoff or the feed download: same clock, same budget
+        docs = collect(spec("RssCrawler", FEED_URL), slow_candidates())
+    assert len(docs) == 2  # the first download is free (100 s), the second waits 30 s and ends past 120: no third
+    assert budget.truncated is True
+
+
+def test_known_urls_do_not_use_budget_or_truncate(net: FakeNet) -> None:
+    slow_net(net)
+    known = {u for u, _, _ in slow_candidates()[:8]}
+    with fetch_budget(120) as budget, skip_known(lambda urls: {u for u in urls if u in known}):
+        docs = collect(spec("RssCrawler", FEED_URL), slow_candidates())
+    assert [d.url for d in docs] == [f"{SLOW_HOST}/news/8", f"{SLOW_HOST}/news/9"]
+    assert budget.truncated is False
+
+
+def test_rss_crawler_honours_the_budget(net: FakeNet) -> None:
+    items = "".join(
+        f"<item><title>T{i}</title><link>{SLOW_HOST}/news/{i}</link>"
+        "<pubDate>Tue, 03 Nov 2026 10:00:00 GMT</pubDate></item>"
+        for i in range(10)
+    )
+    net.page(
+        FEED_URL,
+        f'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>{items}</channel></rss>',
+    )
+    slow_net(net)
+    with fetch_budget(120) as budget:
+        docs = RssCrawler().fetch(spec("RssCrawler", FEED_URL), SINCE)
+    assert 0 < len(docs) <= 4  # the feed download itself already counts toward the 30 s interval
+    assert budget.truncated is True

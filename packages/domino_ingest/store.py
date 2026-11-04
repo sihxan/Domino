@@ -48,7 +48,7 @@ _DUE = text(
            cadence_min, parser, lang, enabled, last_ok_at, fail_count
     FROM sources
     WHERE enabled AND (last_ok_at IS NULL OR last_ok_at + make_interval(mins => cadence_min) <= :due_by)
-    ORDER BY id
+    ORDER BY last_ok_at NULLS FIRST, id
     """
 )
 
@@ -57,7 +57,8 @@ def due_sources(now: datetime | None = None, *, conn: Connection | None = None) 
     """Enabled sources whose cadence has elapsed since `last_ok_at` (or never succeeded), with their state.
 
     `CADENCE_TOLERANCE` absorbs the seconds between a cron tick and the `now` recorded in `last_ok_at`; without it a
-    30-minute source would only run every second tick (45 minutes).
+    30-minute source would only run every second tick (45 minutes). Oldest `last_ok_at` first (never-succeeded first),
+    so sources that were left unprocessed or truncated by the fetch budget are served before the others.
     """
     with _conn(conn) as c:
         found = c.execute(_DUE, {"due_by": (now or now_utc()) + CADENCE_TOLERANCE}).mappings().all()

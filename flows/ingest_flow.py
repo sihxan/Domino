@@ -17,7 +17,7 @@ from domino_core.timeutil import now_utc
 from domino_ingest import store
 from domino_ingest.chunker import chunk
 from domino_ingest.crawlers import CRAWLERS, base
-from domino_ingest.crawlers.base import skip_known
+from domino_ingest.crawlers.base import fetch_budget, skip_known
 from domino_ingest.normalizer import SkippedDocError, normalize, url_hash
 from domino_ingest.sources import WIRES_FILE, load_wires
 from domino_ingest.store import SourceState
@@ -29,6 +29,12 @@ FIRST_LOOKBACK = timedelta(hours=24)  # `since` for a source that has never succ
 FETCH_ATTEMPTS = 3  # crawl attempts per source and run on TransientError (tech §5 ingest.fetch)
 FETCH_BACKOFF_S = 2.0  # wait 2 s, then 4 s, between attempts
 
+# Fetch time budgets (decision W2-1, review H2). A Crawl-delay-30 source (Destatis) after a long pause has hours of
+# backlog; without a budget the flow hits its 600 s limit, stores nothing and starves the sources after it.
+SOURCE_FETCH_BUDGET_S = 120  # one source's crawl, retries included
+FLOW_FETCH_BUDGET_S = 450  # the whole run: the 600 s limit minus 150 s for storing and the extract trigger
+MIN_SOURCE_BUDGET_S = 10  # with less than this left, the remaining sources are not started (they stay due)
+
 log = get_logger("flows.ingest")
 
 
@@ -39,20 +45,25 @@ def _known_urls(urls: list[str]) -> set[str]:
     return {u for u, h in hashes.items() if h in known}
 
 
-def _crawl(spec: SourceSpec, since: datetime) -> list[RawDoc]:
-    """One source's crawl, retried on TransientError with exponential backoff; PermanentError is never retried."""
+def _crawl(spec: SourceSpec, since: datetime, budget_s: float) -> tuple[list[RawDoc], bool]:
+    """One source's crawl: (documents, truncated). `truncated` means the fetch budget ran out with entries left over.
+
+    TransientError is retried with exponential backoff, PermanentError never. All attempts share one `budget_s`; once
+    it is spent a failed attempt is not retried (the retry would be truncated at its first download).
+    """
     if spec.parser not in CRAWLERS:
         raise PermanentError(f"unknown crawler {spec.parser!r}")
-    for attempt in range(1, FETCH_ATTEMPTS + 1):
-        try:
-            with skip_known(_known_urls):
-                return CRAWLERS[spec.parser]().fetch(spec, since=since)
-        except TransientError as e:
-            if attempt == FETCH_ATTEMPTS:
-                raise
-            delay = FETCH_BACKOFF_S * 2 ** (attempt - 1)
-            log.warning("fetch_retry", attempt=attempt, wait_s=delay, error=str(e))
-            base.CLOCK.sleep(delay)
+    with fetch_budget(budget_s) as budget:
+        for attempt in range(1, FETCH_ATTEMPTS + 1):
+            try:
+                with skip_known(_known_urls):
+                    return CRAWLERS[spec.parser]().fetch(spec, since=since), budget.truncated
+            except TransientError as e:
+                if attempt == FETCH_ATTEMPTS or budget.expired():
+                    raise
+                delay = FETCH_BACKOFF_S * 2 ** (attempt - 1)
+                log.warning("fetch_retry", attempt=attempt, wait_s=delay, error=str(e))
+                base.CLOCK.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -79,9 +90,10 @@ def _ingest_document(raw: RawDoc, spec: SourceSpec, now: datetime, wires: WireRu
     return "chunked"
 
 
-def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: WireRules) -> None:
+def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: WireRules, budget_s: float) -> None:
+    since = state.last_ok_at or now - FIRST_LOOKBACK
     try:
-        raws = _crawl(spec, state.last_ok_at or now - FIRST_LOOKBACK)
+        raws, truncated = _crawl(spec, since, budget_s)
     except Exception as e:  # Domino errors and library exceptions alike: only this source is skipped (L3)
         if not isinstance(e, DominoError):
             log.exception("source_crashed", error=str(e))
@@ -106,22 +118,34 @@ def _ingest_source(spec: SourceSpec, state: SourceState, now: datetime, wires: W
     # document holds it back to its own publication date, so the next run fetches that entry again. (`fail_count`
     # counts source failures only.)
     mark_at = min([r.published_at for r in failed if r.published_at is not None] + [now])
+    if truncated:
+        # The fetch budget ran out with entries left: what was fetched is stored above, but the source must not move
+        # past what it still owes, or those entries are lost for good. Next run starts from the same `since` and
+        # `skip_known` skips what is stored, so progress only goes forward. With a failed document too, the older wins.
+        mark_at = min(mark_at, since)
+        log.warning("source_truncated", n_fetched=len(raws), last_ok_at=mark_at.isoformat())
     store.mark_ok(spec, at=mark_at)
-    log.info("source_ok", n_fetched=len(raws), last_ok_at=mark_at.isoformat(), **counts)
+    log.info("source_ok", n_fetched=len(raws), truncated=truncated, last_ok_at=mark_at.isoformat(), **counts)
 
 
 @flow(name="ingest", timeout_seconds=600)
 def ingest_flow(now: datetime | None = None) -> None:
-    """Fetch every due source, store new documents with story and chunks. (extract_flow is added in Week 2.)"""
+    """Fetch every due source (longest-waiting first) within the time budgets; store documents with story and chunks."""
+    started = base.CLOCK.monotonic()
     now = now or now_utc()
     run_id = new_id("run")
     with bind_context(run_id=run_id, flow="ingest"):
         wires = WireRules(patterns=load_wires(ROOT / "sources" / WIRES_FILE), publishers=store.source_publishers())
         due = store.due_sources(now)
         log.info("ingest_start", n_due=len(due))
-        for spec, state in due:
+        for n_done, (spec, state) in enumerate(due):
+            left = FLOW_FETCH_BUDGET_S - (base.CLOCK.monotonic() - started)
+            if left < MIN_SOURCE_BUDGET_S:
+                # not started, state untouched: they stay due and, having waited longest, go first next run
+                log.warning("flow_budget_spent", n_untouched=len(due) - n_done, n_due=len(due))
+                break
             with bind_context(key=spec.id):
-                _ingest_source(spec, state, now, wires)
+                _ingest_source(spec, state, now, wires, min(SOURCE_FETCH_BUDGET_S, left))
         log.info("ingest_done", n_due=len(due))
 
 

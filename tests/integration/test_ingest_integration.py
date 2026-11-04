@@ -29,6 +29,7 @@ from domino_ingest.crawlers.base import Clock
 from domino_ingest.normalizer import LangUndetectedError, TooShortError, url_hash
 from domino_ingest.simhash import to_signed
 from domino_ingest.sources import upsert_sources
+from flows import ingest_flow as ingest_module
 from flows.ingest_flow import ingest_flow
 
 pytestmark = pytest.mark.integration
@@ -98,9 +99,18 @@ class FakeCrawler:
     script: ClassVar[dict[str, list[list[RawDoc] | Exception]]] = {}  # per-call outcomes, used before `plan`
     since_seen: ClassVar[list[tuple[str, datetime]]] = []
     respect_since: ClassVar[bool] = False  # True: drop dated documents older than `since`, like RssCrawler does
+    truncate: ClassVar[set[str]] = set()  # sources that report "ran out of fetch budget" (what `collect` does)
+    advance: ClassVar[dict[str, float]] = {}  # seconds of fake time one attempt of this source takes
+    budgets_seen: ClassVar[list[tuple[str, float | None]]] = []  # (source id, budget seconds left at attempt start)
 
     def fetch(self, spec: SourceSpec, since: datetime) -> list[RawDoc]:
         FakeCrawler.since_seen.append((spec.id, since))
+        budget = base.current_budget()
+        FakeCrawler.budgets_seen.append((spec.id, budget.remaining() if budget else None))
+        if spec.id in FakeCrawler.advance:
+            base.CLOCK.sleep(FakeCrawler.advance[spec.id])
+        if budget is not None and spec.id in FakeCrawler.truncate:
+            budget.truncated = True
         scripted = FakeCrawler.script.get(spec.id)
         result = scripted.pop(0) if scripted else FakeCrawler.plan[spec.id]
         if isinstance(result, Exception):
@@ -206,6 +216,9 @@ def engine(migrated: Engine, monkeypatch: pytest.MonkeyPatch) -> Engine:
     FakeCrawler.script = {}
     FakeCrawler.since_seen = []
     FakeCrawler.respect_since = False
+    FakeCrawler.truncate = set()
+    FakeCrawler.advance = {}
+    FakeCrawler.budgets_seen = []
     monkeypatch.setitem(CRAWLERS, "FakeCrawler", FakeCrawler)
     SLEEPS.clear()  # retry backoff must not really wait
     monkeypatch.setattr(base, "CLOCK", Clock(monotonic=lambda: 0.0, sleep=SLEEPS.append))
@@ -616,6 +629,254 @@ def test_undated_rss_entries_are_not_downloaded_again(engine: Engine, monkeypatc
     base.reset_state()
 
 
+# --- fetch budgets (week-2 T3, decision W2-1) ---------------------------------------------
+
+
+class FlowTimeout(BaseException):
+    """Prefect killing the flow at its 600 s limit (a BaseException: `except Exception` does not catch it)."""
+
+
+class FakeWeb:
+    """Fake `clients.http.get` and a fake clock; sleeping advances time. Hosts in `slow` have `Crawl-delay: 30`."""
+
+    flow_limit_s = 600.0
+
+    def __init__(self) -> None:
+        self.t = 0.0
+        self.run_start = 0.0
+        self.enforce_limit = False
+        self.routes: dict[str, str] = {}
+        self.slow: set[str] = set()
+        self.calls: list[str] = []
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.t += seconds
+        if self.enforce_limit and self.t - self.run_start > self.flow_limit_s:
+            raise FlowTimeout
+
+    def get(
+        self, url: str, *, timeout: float, headers: dict[str, str] | None = None
+    ) -> tuple[int, str, dict[str, str]]:
+        self.calls.append(url)
+        if url.endswith("/robots.txt"):
+            host = url.removesuffix("/robots.txt")
+            if host in self.slow:
+                return 200, "User-agent: *\nCrawl-delay: 30\n", {}
+            raise PermanentError("http 404")
+        if url in self.routes:
+            return 200, self.routes[url], {}
+        raise PermanentError(f"http 404: {url}")
+
+    def articles(self, source_id: str) -> list[str]:
+        return [c for c in self.calls if c.startswith(f"https://{source_id}.example.org/news/")]
+
+    def add_slow_site(self, source_id: str, n: int) -> None:
+        """A feed of `n` entries (all within the 24 h lookback) on a Crawl-delay-30 host."""
+        host = f"https://{source_id}.example.org"
+        self.slow.add(host)
+        published = (T0 - timedelta(hours=1)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        items = "".join(
+            f"<item><title>Report {i}</title><link>{host}/news/{i}</link><pubDate>{published}</pubDate></item>"
+            for i in range(n)
+        )
+        self.routes[f"{host}/feed.xml"] = (
+            f'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>{items}</channel></rss>'
+        )
+        for i in range(n):
+            self.routes[f"{host}/news/{i}"] = page(f"{BODY_RATES} Report number {i}.", title=f"Report {i}")
+
+    def run(self, at: datetime) -> float:
+        """One ingest run at `at`; returns the fake seconds it took. The clock then moves 15 minutes on."""
+        self.run_start = self.t
+        ingest_flow.fn(now=at)
+        elapsed = self.t - self.run_start
+        self.t += 900
+        return elapsed
+
+
+@pytest.fixture
+def web(engine: Engine, monkeypatch: pytest.MonkeyPatch) -> FakeWeb:
+    fake = FakeWeb()
+    base.reset_state()
+    monkeypatch.setattr(base, "CLOCK", Clock(monotonic=fake.monotonic, sleep=fake.sleep))
+    monkeypatch.setattr(http, "get", fake.get)
+    return fake
+
+
+def slow_spec(source_id: str) -> SourceSpec:
+    return spec(source_id, parser="RssCrawler")
+
+
+def source_row(engine: Engine, source_id: str) -> tuple[datetime | None, int]:
+    last_ok_at, fail_count = rows(engine, "SELECT last_ok_at, fail_count FROM sources WHERE id = :i", i=source_id)[0]
+    return last_ok_at, fail_count
+
+
+def n_docs(engine: Engine, source_id: str) -> int:
+    return int(scalar(engine, "SELECT count(*) FROM raw_documents WHERE source_id = :i", i=source_id))
+
+
+def test_truncated_source_does_not_advance(engine: Engine, web: FakeWeb) -> None:
+    """Review H2: a source that ran out of fetch budget keeps `last_ok_at`, stores what it got, and converges."""
+    since = T0 - timedelta(hours=24)
+    seed(engine, slow_spec("src_t_a"))
+    web.add_slow_site("src_t_a", 10)
+
+    stored: list[int] = []
+    last_ok: list[datetime | None] = []
+    for k in range(5):
+        web.run(T0 + timedelta(minutes=15 * k))
+        stored.append(n_docs(engine, "src_t_a"))
+        last_ok.append(source_row(engine, "src_t_a")[0])
+        if last_ok[-1] != since:
+            break
+
+    assert stored[0] > 0  # what was downloaded before the budget ran out is stored, not thrown away
+    assert last_ok[0] == since  # ... but the source did not advance: the rest of the feed is still owed
+    assert stored == sorted(set(stored))  # every truncated run made progress
+    assert stored[-1] == 10  # converged: the run that got everything is the one that moved `last_ok_at`
+    assert last_ok[-1] == T0 + timedelta(minutes=15 * (len(stored) - 1))
+    assert len(stored) >= 2
+    assert source_row(engine, "src_t_a")[1] == 0
+    articles = web.articles("src_t_a")
+    assert len(articles) == len(set(articles)) == 10  # later runs continue; nothing is downloaded twice (skip_known)
+
+
+def test_slow_source_does_not_starve_others(engine: Engine, web: FakeWeb) -> None:
+    """Review H2: a 40-entry Crawl-delay-30 source first in id order must not keep the other sources from running."""
+    seed(engine, slow_spec("src_a_slow"), spec("src_b"), spec("src_c"), spec("src_d"))
+    web.add_slow_site("src_a_slow", 40)
+    FakeCrawler.plan = {
+        "src_b": [raw("https://b.example.org/rates", page(BODY_RATES), "src_b")],
+        "src_c": [raw("https://c.example.org/trade", page(BODY_TRADE), "src_c")],
+        "src_d": [raw("https://d.example.org/power", page(BODY_POWER), "src_d")],
+    }
+    web.enforce_limit = True  # the old code needs 40 x 30 s here and dies at the flow's 600 s limit
+
+    elapsed = web.run(T0)
+
+    assert elapsed <= ingest_module.FLOW_FETCH_BUDGET_S
+    for other in ("src_b", "src_c", "src_d"):
+        assert source_row(engine, other) == (T0, 0)  # `mark_ok`
+        assert n_docs(engine, other) == 1
+    last_ok_at, fail_count = source_row(engine, "src_a_slow")
+    assert (last_ok_at, fail_count) == (T0 - timedelta(hours=24), 0)
+    assert 0 < n_docs(engine, "src_a_slow") < 40
+
+
+def test_flow_budget_leaves_the_rest_untouched_and_they_go_first_next_run(engine: Engine, web: FakeWeb) -> None:
+    """Four slow sources use 120 + 120 + 120 + 90 s of the 450 s flow budget; the source after them is not touched."""
+    slow_ids = ["src_s1", "src_s2", "src_s3", "src_s4"]
+    seed(engine, *[slow_spec(i) for i in slow_ids], spec("src_z_fast"))
+    for i in slow_ids:
+        web.add_slow_site(i, 40)
+    FakeCrawler.plan = {"src_z_fast": [raw("https://z.example.org/rates", page(BODY_RATES), "src_z_fast")]}
+
+    elapsed = web.run(T0)
+
+    assert elapsed == ingest_module.FLOW_FETCH_BUDGET_S == 450  # 120 + 120 + 120 + min(120, 450 - 360)
+    assert [n_docs(engine, i) for i in slow_ids] == [4, 4, 4, 3]
+    assert FakeCrawler.since_seen == []  # src_z_fast was not even crawled: < 10 s of budget left
+    assert source_row(engine, "src_z_fast") == (None, 0)  # still due, state unchanged
+
+    web.run(T0 + timedelta(minutes=15))  # `last_ok_at IS NULL` sorts first: the untouched source is first in line
+    assert [sid for sid, _ in FakeCrawler.since_seen] == ["src_z_fast"]
+    assert source_row(engine, "src_z_fast")[0] == T0 + timedelta(minutes=15)
+    assert [n_docs(engine, i) for i in slow_ids[:2]] == [8, 8]  # and the slow ones keep converging
+
+
+def test_source_budget_is_the_smaller_of_120_and_the_flow_time_left(engine: Engine, web: FakeWeb) -> None:
+    seed(engine, spec("src_t_a"), spec("src_t_b"), spec("src_t_c"))
+    FakeCrawler.plan = {"src_t_a": [], "src_t_b": [], "src_t_c": []}
+    FakeCrawler.advance = {"src_t_a": 400.0, "src_t_b": 45.0}  # a overruns its 120 s; b uses 45 of what is left
+    web.run(T0)
+    budgets = dict(FakeCrawler.budgets_seen)
+    assert budgets == {"src_t_a": pytest.approx(120.0), "src_t_b": pytest.approx(50.0)}
+    assert [sid for sid, _ in FakeCrawler.budgets_seen] == ["src_t_a", "src_t_b"]  # 5 s left: src_t_c untouched
+    assert source_row(engine, "src_t_c") == (None, 0)
+    assert source_row(engine, "src_t_a")[0] == T0 and source_row(engine, "src_t_b")[0] == T0
+
+
+def test_retries_share_the_source_budget(engine: Engine, web: FakeWeb) -> None:
+    seed(engine, spec("src_t_a"))
+    doc = raw("https://a.example.org/rates", page(BODY_RATES))
+    FakeCrawler.script = {"src_t_a": [TransientError("http 503"), TransientError("http 503"), [doc]]}
+    FakeCrawler.advance = {"src_t_a": 30.0}
+    web.run(T0)
+    left = [b for _, b in FakeCrawler.budgets_seen]
+    # one 120 s budget for all three attempts: 120, then 120 - 30 - 2 (backoff), then 88 - 30 - 4
+    assert left == [pytest.approx(120.0), pytest.approx(88.0), pytest.approx(54.0)]
+    assert source_row(engine, "src_t_a") == (T0, 0)
+    assert n_docs(engine, "src_t_a") == 1
+
+
+def test_no_retry_once_the_source_budget_is_spent(engine: Engine, web: FakeWeb) -> None:
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.script = {"src_t_a": [TransientError("http 503"), [raw("https://a.example.org/x", page(BODY_RATES))]]}
+    FakeCrawler.advance = {"src_t_a": 130.0}  # the first attempt alone outlasts the 120 s budget
+    web.run(T0)
+    assert len(FakeCrawler.since_seen) == 1  # a retry would be truncated at once and could only fail the same way
+    assert source_row(engine, "src_t_a") == (None, 1)  # reported as the failure it is
+
+
+def test_truncated_source_without_a_last_ok_at_pins_it_to_the_24h_lookback(engine: Engine, web: FakeWeb) -> None:
+    """The first-ever run of a source: `last_ok_at` becomes `since` (now - 24 h), so the next run does not slide."""
+    seed(engine, spec("src_t_a"))
+    FakeCrawler.plan = {"src_t_a": [raw("https://a.example.org/rates", page(BODY_RATES))]}
+    FakeCrawler.truncate = {"src_t_a"}
+    web.run(T0)
+    assert source_row(engine, "src_t_a") == (T0 - timedelta(hours=24), 0)
+    assert n_docs(engine, "src_t_a") == 1
+
+
+@pytest.mark.parametrize(
+    ("failed_published", "expected"),
+    [
+        (timedelta(minutes=-30), timedelta(hours=-2)),  # failed document newer than `since`: the truncation rule wins
+        (timedelta(hours=-3), timedelta(hours=-3)),  # failed document older than `since`: the document rule wins
+    ],
+)
+def test_truncation_and_failed_document_keep_the_older_last_ok_at(
+    engine: Engine,
+    web: FakeWeb,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_published: timedelta,
+    expected: timedelta,
+) -> None:
+    seed(engine, spec("src_t_a"))
+    with connection(engine=engine) as conn:
+        conn.execute(text("UPDATE sources SET last_ok_at = :t"), {"t": T0 - timedelta(hours=2)})
+    FakeCrawler.plan = {
+        "src_t_a": [raw("https://a.example.org/rates", page(BODY_RATES), published_at=T0 + failed_published)]
+    }
+    FakeCrawler.truncate = {"src_t_a"}
+    monkeypatch.setattr("domino_ingest.normalizer.put_immutable", _raise_permanent)
+    web.run(T0)
+    assert source_row(engine, "src_t_a") == (T0 + expected, 0)
+
+
+def test_due_sources_order(engine: Engine) -> None:
+    """Review H2: the source that has waited longest goes first; never-succeeded sources before all; ties by id."""
+    seed(engine, spec("src_t_a"), spec("src_t_b"), spec("src_t_c"), spec("src_t_d"), spec("src_t_e"), spec("src_t_f"))
+    ages = {"src_t_a": 1, "src_t_c": 5, "src_t_d": 2, "src_t_e": 5}  # hours; src_t_b and src_t_f never succeeded
+    with connection(engine=engine) as conn:
+        for sid, hours in ages.items():
+            conn.execute(
+                text("UPDATE sources SET last_ok_at = :t WHERE id = :i"), {"t": T0 - timedelta(hours=hours), "i": sid}
+            )
+    assert [s.id for s, _ in store.due_sources(T0)] == [
+        "src_t_b",
+        "src_t_f",  # NULL first, id order among them
+        "src_t_c",
+        "src_t_e",  # oldest first (5 h), id order on a tie
+        "src_t_d",
+        "src_t_a",
+    ]
+
+
 # --- store ---------------------------------------------------------------------------
 
 
@@ -723,10 +984,10 @@ def test_due_sources_returns_state_and_skips_disabled_and_not_due(engine: Engine
         conn.execute(text("UPDATE sources SET last_ok_at = :t WHERE id = 'src_t_b'"), {"t": T0 - timedelta(minutes=30)})
     due = store.due_sources(T0)
     assert [(s.id, st.last_ok_at, st.fail_count) for s, st in due] == [
+        ("src_t_d", None, 0),  # never succeeded: first (oldest-first order, W2-1)
         ("src_t_a", T0 - timedelta(hours=1), 2),
-        ("src_t_d", None, 0),
     ]
-    assert due[0][0] == spec("src_t_a", cadence_min=15)
+    assert due[1][0] == spec("src_t_a", cadence_min=15)
 
 
 def test_due_sources_tolerates_one_minute_of_cadence_drift(engine: Engine) -> None:
