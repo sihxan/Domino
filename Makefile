@@ -1,4 +1,4 @@
-.PHONY: test up down migrate seed golden report-dry-run
+.PHONY: test up down migrate seed deploy golden report-dry-run
 
 test:
 	uv run ruff check .
@@ -25,6 +25,10 @@ migrate:
 # Week 1: sources only; theses/ and storylines/ are loaded in later weeks.
 seed:
 	uv run python -m domino_ingest.sources
+
+# Register the Prefect deployments from inside the worker (paths match its image). After a code change: make up, then make deploy.
+deploy:
+	docker compose exec prefect-worker python flows/deploy.py
 
 golden:
 	@echo "make golden: not implemented yet" && exit 1
