@@ -122,7 +122,7 @@
   - 추정: M (2h) · 모델: sonnet
   - 선행: 없음
 
-- [ ] T11 — domino_extract — validator
+- [x] (842d6fd) T11 — domino_extract — validator
   - 명세: code-phase0.md §2.5, §7.7 `test_validator.py` · tech-phase0.md §5.1 extract.validate · **결정 W2-8**
   - 산출물: `packages/domino_extract/validator.py`(`ValidatedTriple`, `DropReason`, `looks_attributive`, `validate`), `tests/unit/test_validator.py`
   - 완료 기준 (테스트 먼저): `test_validator.py` — hedge 강등(CAUSAL+"may"→SPECULATIVE, `is_correlation_only=True`), 자기참조 drop, `state_controlled` 소스의 attributive fact → attribution(비 state 소스는 그대로), `char_start/char_end`가 문서 좌표(`chunk.char_start + g[0]`)이고 `doc.text[s:e]`가 quote 위치, grounding 실패 4/10 → `PermanentError("grounding_rate_low")`·3/10 → 통과. `make test` 초록
