@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from itertools import pairwise
 
 import pytest
+import tiktoken
 
 from domino_core.errors import PermanentError, TransientError
 from domino_core.models import Chunk, Document
@@ -332,7 +333,7 @@ def test_encoding_download_failure_is_transient(monkeypatch: pytest.MonkeyPatch)
         raise OSError("network unreachable")
 
     chunker._encoding.cache_clear()
-    monkeypatch.setattr(chunker.tiktoken, "get_encoding", boom)
+    monkeypatch.setattr(tiktoken, "get_encoding", boom)
     try:
         with pytest.raises(TransientError):
             count_tokens("anything")
