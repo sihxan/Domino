@@ -96,7 +96,7 @@
   - 추정: M (3h) · 모델: opus
   - 선행: T1 (pyproject 먼저 merge — 의존성 충돌 방지)
 
-- [ ] T8 — domino_core — Langfuse 연결 (`llm.call`의 trace)
+- [x] (6c67cd1) T8 — domino_core — Langfuse 연결 (`llm.call`의 trace) (실물 확인은 LLM 없이 `trace_generation` 직접 호출 1회 — 실호출 보류; trace ebb45edc-9134-44b2-9574-a1515ef60ffd)
   - 명세: code-phase0.md §0.4 `trace`, tech-phase0.md §6.4 관측 · decisions [root] Langfuse v2 · **결정 W2-7**
   - 산출물: `packages/domino_core/clients/langfuse.py`(SDK v2 래퍼: `trace_generation(task, model, input, output, usage, cost_usd, latency_ms, metadata)`), `llm.py`에서 호출, `pyproject.toml`(`langfuse` 2.x 고정), `tests/unit/test_langfuse_client.py`
   - 완료 기준:
