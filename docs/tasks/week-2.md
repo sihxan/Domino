@@ -154,7 +154,7 @@
 
 ### C. Week 2 본 범위 — gold 30 첫 측정
 
-- [ ] T14 — domino_eval — gold 포맷·매칭·Metrics·회귀·`make golden`·gold 내보내기 도구
+- [x] T14 (0bb3e86, merge 93d63a1) — domino_eval — gold 포맷·매칭·Metrics·회귀·`make golden`·gold 내보내기 도구
   - 명세: code-phase0.md §7.1, §7.2 · tech-phase0.md §7.1 골든 층, §7.2 임계 · **결정 W2-13**
   - 산출물: `packages/domino_eval/{gold.py, matching.py, regression.py, gold_export.py}`(`GoldItem` 모델·로더, 매칭 규칙, `Metrics`, `run_extract_regression`, `assert_thresholds`, `python -m domino_eval.gold_export --lang ko --n 15 --out …`가 DB chunk를 라벨 빈 칸 jsonl로), `tests/golden/test_extract_regression.py`(`@pytest.mark.golden`), `Makefile`의 `golden`(`uv run pytest tests/golden -m golden -s`), `tests/unit/{test_matching.py, test_regression_metrics.py}`
   - 완료 기준 (테스트 먼저, LLM mock):
