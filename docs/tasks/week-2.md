@@ -164,7 +164,7 @@
   - 추정: M (3h) · 모델: sonnet
   - 선행: T12
 
-- [ ] T15 — domino_eval (사람) — gold 30건 라벨링(en 15·ko 15) + 첫 `make golden`
+- [ ] T15 — domino_eval (사람) — gold 30건 라벨링(en 15·ko 15) + 첫 `make golden` — **보류(2026-11-05): 뽑은 20건 중 쓸 만한 것 2건(과기정통부 14건이 "첨부파일 참고" 템플릿, BoJ 대차대조표 표 3건, BLS 안내문 1건). gold는 Week 4 "본문이 페이지에 있는 소스"로 재선정·사람 2인 블라인드(docs/prompts/A-week4.md (3)). 측정은 LLM 인증 결정 후**
   - 명세: code-phase0.md §7.1 · tech-phase0.md §7.2 · **결정 W2-13**
   - 산출물: `packages/domino_eval/gold/extract_030.jsonl`, `docs/review/golden-ext-1.0.md`(Metrics 표·비용·실패 상위 유형 3)
   - 완료 기준: 30줄이 `GoldItem`으로 로드됨(`uv run python -c "from domino_eval.gold import load_gold; assert len(load_gold('packages/domino_eval/gold/extract_030.jsonl')) == 30"`), ko 15·en 15, 인과 없음(has_causal false) 각 언어 ≥ 4; `make golden` **1회** 실행(예상 비용 ≤ $0.5, 예산 키 `budget:golden:<date>` 한도 $2) 결과를 `golden-ext-1.0.md`에 기록 — 임계 미달이어도 측정 자체가 완료 기준
