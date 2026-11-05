@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from domino_core.clients import default_settings
+from domino_core.clients import langfuse as langfuse_client
 from domino_core.clients.llm_backends import BackendReply, BackendRequest, Usage
 from domino_core.clients.llm_backends import api as api_backend
 from domino_core.clients.llm_backends import claude_code as claude_code_backend
@@ -188,31 +189,46 @@ def call(
     try:
         reply = BACKENDS[backend](req, settings)
     except DominoError as e:
-        log.warning("llm_call_failed", **meta, error=type(e).__name__, latency_ms=_ms(started))
+        latency = _ms(started)
+        log.warning("llm_call_failed", **meta, error=type(e).__name__, latency_ms=latency)
+        _trace(task, req, None, None, 0.0, latency, trace, backend, f"{type(e).__name__}: {e}")
         raise
+    latency = _ms(started)
 
     usage = reply.usage
     if usage is None:
         log.warning("llm_usage_missing", **meta)
         usage = Usage(0, 0, 0, 0)
     cost = cost_usd(price, usage)
-    with redis_errors():
-        for key, ttl in ((budget_key, DAY_TTL_S), (month_key, MONTH_TTL_S)):
-            if key is not None:
-                redis.incrbyfloat(key, cost)
-                redis.expire(key, ttl)
-    log.info(
-        "llm_call",
-        **meta,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        cache_write=usage.cache_write,
-        cache_read=usage.cache_read,
-        cost_usd=round(cost, 6),
-        stop_reason=reply.stop_reason,
-        latency_ms=_ms(started),
-    )
+    error: str | None = None
+    try:
+        with redis_errors():
+            for key, ttl in ((budget_key, DAY_TTL_S), (month_key, MONTH_TTL_S)):
+                if key is not None:
+                    redis.incrbyfloat(key, cost)
+                    redis.expire(key, ttl)
+        log.info(
+            "llm_call",
+            **meta,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_write=usage.cache_write,
+            cache_read=usage.cache_read,
+            cost_usd=round(cost, 6),
+            stop_reason=reply.stop_reason,
+            latency_ms=latency,
+        )
+        return _result(reply, schema, usage, cost, max_tokens)
+    except DominoError as e:
+        error = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        _trace(task, req, reply, usage, cost, latency, trace, backend, error)
 
+
+def _result(
+    reply: BackendReply, schema: type[BaseModel] | None, usage: Usage, cost: float, max_tokens: int
+) -> LLMResult[Any]:
     if reply.error is not None:
         raise PermanentError(reply.error)
     if reply.stop_reason == "refusal":
@@ -232,6 +248,35 @@ def call(
         output_tokens=usage.output_tokens,
         cost_usd=cost,
         cache_read=usage.cache_read,
+    )
+
+
+def _trace(
+    task: str,
+    req: BackendRequest,
+    reply: BackendReply | None,
+    usage: Usage | None,
+    cost: float,
+    latency_ms: int,
+    trace: dict[str, Any] | None,
+    backend: str,
+    error: str | None,
+) -> None:
+    """One Langfuse generation per call (tech §6.4); never raises (W2-7)."""
+    metadata: dict[str, Any] = {**(trace or {}), "backend": backend}
+    if reply is not None:
+        metadata["stop_reason"] = reply.stop_reason
+    if error is not None:
+        metadata["error"] = error
+    langfuse_client.trace_generation(
+        task,
+        req.model,
+        [{"role": "system", "content": req.system}, {"role": "user", "content": req.user}],
+        reply.text if reply is not None else None,
+        usage,
+        cost,
+        latency_ms,
+        metadata,
     )
 
 

@@ -15,6 +15,7 @@ import httpx2
 import pytest
 from pydantic import BaseModel, Field
 
+from domino_core.clients import langfuse as langfuse_client
 from domino_core.clients import llm
 from domino_core.clients.llm_backends import api as api_backend
 from domino_core.clients.llm_backends import claude_code as cc_backend
@@ -159,6 +160,28 @@ def api_message(text: str, stop_reason: str = "end_turn", cw: int = 0, cr: int =
 
 
 # --- fixtures -----------------------------------------------------------------------------------
+
+
+class _NullTrace:
+    id = "tr-null"
+
+    def generation(self, **kw: Any) -> None:
+        return None
+
+
+class _NullLangfuse:
+    def trace(self, **kw: Any) -> _NullTrace:
+        return _NullTrace()
+
+    def flush(self) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def no_langfuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BASE_ENV sets Langfuse host and keys; tracing is covered by test_langfuse_client.py and must not send here."""
+    monkeypatch.setattr(langfuse_client, "_clients", {})
+    monkeypatch.setattr(langfuse_client, "_new_client", lambda *a: _NullLangfuse())
 
 
 @pytest.fixture
