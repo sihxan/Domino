@@ -30,8 +30,10 @@ seed:
 deploy:
 	docker compose exec prefect-worker python flows/deploy.py
 
+# Gold-set extraction regression: real LLM calls, cost incurred (budget:golden). Only this file: tests/golden/test_llm_smoke.py
+# is a one-off hand check, not part of the gold run. Fails with a message, before any LLM call, if the gold file is missing.
 golden:
-	@echo "make golden: not implemented yet" && exit 1
+	uv run pytest tests/golden/test_extract_regression.py -m golden -s
 
 report-dry-run:
 	@echo "make report-dry-run: not implemented yet" && exit 1
